@@ -188,6 +188,24 @@ def cmd_paths(args, ws: Workspace) -> int:
     return 0
 
 
+ROUTER = """# unfloat workspace
+
+Written by `uo setup`; not part of any repository, do not edit.
+
+This folder holds the unfloat repositories and the data folder; it is not a repository itself.
+Read `ops/AGENTS.md` now and follow it: it is the session routine and the map of the workspace.
+Make every change inside one repository (`ops/`, `research/`, `vitreometry/`, `os/`, `site/`)
+and commit there. Never create files at this level, and never write into `data/` except through
+the project's tools.
+"""
+
+
+def write_router(ws: Workspace) -> None:
+    """The workspace folder routes agents launched there to the records repository."""
+    (ws.root / "AGENTS.md").write_text(ROUTER, encoding="utf-8")
+    (ws.root / "CLAUDE.md").write_text("Instructions for agents are in AGENTS.md.\n\n@AGENTS.md\n", encoding="utf-8")
+
+
 def cmd_setup(args, ws: Workspace) -> int:
     for name, member in ws.members.items():
         if not member.path.is_dir():
@@ -202,6 +220,8 @@ def cmd_setup(args, ws: Workspace) -> int:
         print(f"{name}: ready")
     for folder in ws.data.values():
         folder.mkdir(parents=True, exist_ok=True)
+    write_router(ws)
+    print(f"workspace: {ws.root / 'AGENTS.md'} routes sessions to ops/AGENTS.md")
     return 0
 
 
