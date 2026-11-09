@@ -1,0 +1,11 @@
+#!/bin/sh
+# The data guard and the checks of this repository (D-023, contracts C1, C5, C6; ops/SCHEMA.md).
+# Enabled by `uo setup`, or in a fresh clone with: git config core.hooksPath .githooks
+# Never bypass with --no-verify.
+set -eu
+if ! command -v uo >/dev/null 2>&1; then
+    echo "pre-commit: uo not found; install it with: uv tool install --editable <workspace>/os" >&2
+    exit 1
+fi
+uo guard
+uo check --repo "$(git rev-parse --show-toplevel)"

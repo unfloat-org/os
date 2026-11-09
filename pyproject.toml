@@ -1,0 +1,32 @@
+[project]
+name = "unfloat-os"
+version = "0.1.0"
+description = "Operating tools for the unfloat project: typed Markdown records, workspace checks, tracker and outbound channel adapters"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Daniil Morozov" }]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+uo = "unfloat_os.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "ruff>=0.12",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.3,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
