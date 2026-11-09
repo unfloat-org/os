@@ -73,6 +73,8 @@ class Workspace:
     root: Path
     members: dict[str, Member]
     data: dict[str, Path] = field(default_factory=dict)
+    # `[checks]` in the manifest: thresholds the checks read, e.g. context_stale_days.
+    settings: dict[str, object] = field(default_factory=dict)
 
     @property
     def ops(self) -> Path:
@@ -117,7 +119,7 @@ class Workspace:
         if unknown:
             raise WorkspaceError(f"{manifest}: unknown data classes {sorted(unknown)}")
         folders = {access: root / rel for access, rel in data.get("data", {}).items()}
-        return cls(root=root, members=members, data=folders)
+        return cls(root=root, members=members, data=folders, settings=dict(data.get("checks", {})))
 
     @classmethod
     def find(cls, start: Path | None = None) -> Workspace:

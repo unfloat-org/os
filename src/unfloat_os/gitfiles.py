@@ -50,3 +50,64 @@ def first_added(repo: Path, path: Path) -> str | None:
 
 def is_ancestor(repo: Path, older: str, newer: str) -> bool:
     return _git(repo, "merge-base", "--is-ancestor", older, newer).returncode == 0
+
+
+def head(repo: Path) -> str | None:
+    result = _git(repo, "rev-parse", "HEAD")
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def upstream(repo: Path) -> str | None:
+    """The tracking branch of the current branch (for example `origin/main`), or None."""
+    result = _git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def ahead_behind(repo: Path) -> tuple[int, int] | None:
+    """(commits not pushed, commits not pulled) against the tracking branch, as of the last fetch."""
+    result = _git(repo, "rev-list", "--left-right", "--count", "HEAD...@{u}")
+    if result.returncode:
+        return None
+    ahead, behind = result.stdout.split()
+    return int(ahead), int(behind)
+
+
+def remote_url(repo: Path, remote: str = "origin") -> str | None:
+    result = _git(repo, "remote", "get-url", remote)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def config_value(repo: Path, key: str) -> str | None:
+    result = _git(repo, "config", "--get", key)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def show(repo: Path, ref: str, path: Path) -> str | None:
+    """Content of `path` at `ref` (use ref "" for the index), or None if it does not exist there."""
+    result = _git(repo, "show", f"{ref}:{path.as_posix()}")
+    return result.stdout if result.returncode == 0 else None
+
+
+def commits_touching(repo: Path, path: Path) -> list[str]:
+    """Commits that changed `path` (a file or folder), oldest first."""
+    result = _git(repo, "log", "--reverse", "--format=%H", "--", path.as_posix())
+    return result.stdout.split()
+
+
+def files_in_commit(repo: Path, commit: str) -> list[Path]:
+    """Paths a commit added, changed or deleted, relative to the repository root."""
+    result = _git(repo, "show", "--name-only", "--format=", "--no-renames", commit)
+    return [Path(name) for name in result.stdout.splitlines() if name]
+
+
+def changed_since_head(repo: Path, path: Path) -> bool:
+    """Whether the working tree or index differs from HEAD at `path` (untracked files count)."""
+    if _git(repo, "diff", "HEAD", "--quiet", "--", path.as_posix()).returncode:
+        return True
+    untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "--", path.as_posix())
+    return bool(untracked.stdout.strip())
+
+
+def fetch(repo: Path, remote: str = "origin") -> bool:
+    """Update remote-tracking refs (network). False if the fetch failed."""
+    return _git(repo, "fetch", "--quiet", remote).returncode == 0
