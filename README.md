@@ -8,8 +8,10 @@ Standard library only; Python 3.12 or newer.
 
 | Area | Commands | Rule it enforces |
 | --- | --- | --- |
-| Records | `uo new`, `uo set`, `uo log`, `uo render` | People, tasks and drafts are Markdown notes with typed frontmatter, defined once in `schema.py`. New IDs are taken under a lock, so parallel sessions never collide. Every fact becomes a log event. |
-| Checks | `uo check`, `uo schema --check` | Records match the schema; relative links resolve; open repositories carry no private identifiers and no links into private records; every analysis has a pre-registration committed before its result. |
+| Records | `uo new`, `uo set`, `uo log`, `uo render` | People, tasks and drafts are Markdown notes with typed frontmatter. Kinds, fields and rules are code (`schema.py`); the project's vocabularies (milestones, task owners, log types) live in the records repository's `config/schema.toml`. New IDs are taken under a lock and above every number already pushed. Every fact becomes a log event. |
+| Checks | `uo check`, `uo schema --check`, `uo status` | Records match the schema; email drafts are well-formed with unique subjects; the log and decisions are append-only once pushed; relative links resolve; open repositories carry no private identifiers and no links into private records; analyses keep their pre-registration unchanged and change frozen files only with a dated amendment; hooks are enabled, remotes match the manifest, nothing sits unpushed, the context brief is current. |
+| Schema changes | `uo migrate` | Renaming or adding a field, or renaming a vocabulary value, is applied to every record at once (dry run first). |
+| Several machines | `uo push-check` (pre-push), `uo renumber` | A new ID that another clone already pushed is caught before push and renumbered with every reference. |
 | Data guard | `uo guard` (pre-commit) | Data, images, files over 2 MB and device file names stay out of git. |
 | Channels | `uo gmail`, `uo discord` | Drafts go into Gmail for a person to send; the Discord server is configured from a spec. Outbound text passes one policy check. |
 | Provenance | `unfloat_os.provenance` (library) | Every analysis run writes `run_meta.json` with the commit, uncommitted changes, Python and package versions and input hashes. |

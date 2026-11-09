@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
-from unfloat_os import gitfiles, guard, links, schema, studies
+from unfloat_os import drafts, gitfiles, guard, health, integrity, links, schema, studies
 from unfloat_os.records import Records, Store, to_date
 from unfloat_os.report import Report
 from unfloat_os.workspace import RepoConfig, Workspace
@@ -23,13 +24,9 @@ def _check_field(f: schema.Field, value, records: Records, where: str, report: R
     if f.type == "date":
         if to_date(value) is None:
             report.error(where, f"{f.name} '{value}' is not a valid YYYY-MM-DD date")
-    elif f.type == "vocab":
-        if value not in f.vocab:
-            report.error(where, f"{f.name} '{value}' not in {', '.join(f.vocab)}")
-    elif f.type == "vocab-list":
-        for item in schema.items({f.name: value}, f.name):
-            if item not in f.vocab:
-                report.error(where, f"{f.name} '{item}' not in {', '.join(f.vocab)}")
+    elif f.type in ("vocab", "vocab-list"):
+        for problem in f.vocabulary_problems(value):
+            report.error(where, problem)
     elif f.type == "ref":
         if value in f.vocab:
             return
@@ -46,7 +43,7 @@ def _check_field(f: schema.Field, value, records: Records, where: str, report: R
 
 def validate(records: Records, store: Store) -> Report:
     report = Report()
-    for kind in schema.KINDS.values():
+    for kind in records.schema.kinds.values():
         names = {f.name for f in kind.fields}
         for record in records.by_kind[kind.name].values():
             where = record.path.relative_to(store.root).as_posix()
@@ -79,19 +76,23 @@ def summary(records: Records) -> str:
 
 
 def check_records(ws: Workspace) -> tuple[Report, str]:
+    """Every rule over the records repository's content: schema, email drafts, append-only, CONTEXT freshness."""
     store = Store(ws.ops)
     records = store.load()
     report = Report()
     report.extend(records.report)
     report.extend(validate(records, store))
+    report.extend(drafts.check_email_drafts(records))
+    report.extend(integrity.check_append_only(ws.ops))
+    report.extend(health.check_context_fresh(ws, records))
     return report, summary(records)
 
 
 # schema documentation ---------------------------------------------------------
 
 
-def fill_schema_blocks(text: str) -> str:
-    blocks = schema.generated_blocks()
+def fill_schema_blocks(text: str, blocks: Mapping[str, str]) -> str:
+    """Rewrite each `<!-- uo:NAME -->` block of `text` that has a generated body in `blocks`."""
 
     def replace(match: re.Match) -> str:
         name = match.group("name")
@@ -106,11 +107,12 @@ def check_schema_doc(ws: Workspace) -> Report:
     report = Report()
     path = ws.ops / SCHEMA_DOC
     text = path.read_text(encoding="utf-8")
+    blocks = Store(ws.ops).schema.blocks
     present = {m.group("name") for m in BLOCK.finditer(text)}
-    missing = set(schema.generated_blocks()) - present
+    missing = set(blocks) - present
     if missing:
         report.error(f"ops/{SCHEMA_DOC}", f"no generated block for {', '.join(sorted(missing))}")
-    if fill_schema_blocks(text) != text:
+    if fill_schema_blocks(text, blocks) != text:
         report.error(f"ops/{SCHEMA_DOC}", "generated tables are out of date; run `uo schema`")
     return report
 
@@ -149,8 +151,12 @@ def check_repo(repo: RepoConfig) -> Report:
 
 
 def check_workspace(ws: Workspace) -> tuple[Report, str]:
+    """The records, the generated docs, every repository, and the workspace's own state (hooks, remotes, sync)."""
     report, text = check_records(ws)
     report.extend(check_schema_doc(ws))
     for repo in ws.repos():
         report.extend(check_repo(repo))
+    report.extend(health.check_hooks(ws))
+    report.extend(health.check_remotes(ws))
+    report.extend(health.check_sync(ws))
     return report, text

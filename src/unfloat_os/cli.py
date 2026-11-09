@@ -6,8 +6,9 @@
   uo new task|person|draft TITLE [--set key=value ...] [--body TEXT]
   uo new decision TITLE --decision TEXT --why TEXT [--replaces TEXT] [--source TEXT]
   uo set ID key=value [key=value ...]
-  uo log TYPE REFS SUMMARY [--date YYYY-MM-DD]   REFS: comma-separated IDs, or -
+  uo log TYPE REFS SUMMARY [--date YYYY-MM-DD]   REFS: comma-separated IDs, or -; TYPE is checked at runtime
   uo schema [--check]                 write (or verify) the generated tables in SCHEMA.md
+  uo migrate rename-field|add-field|drop-field|rename-value ... [--apply]   change a field or value in every record
   uo paths                            the workspace, its repositories and data folders
   uo setup                            clone missing repositories, enable hooks, sync environments
   uo gmail ...                        Gmail drafts and replies (uo gmail -h)
@@ -24,7 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from unfloat_os import schema
+from unfloat_os import frontmatter, schema
 from unfloat_os.channels import ChannelError
 from unfloat_os.http import HttpError, NetworkError
 from unfloat_os.records import Store, StoreError, to_date
@@ -47,12 +48,7 @@ def _pairs(items: list[str]) -> dict[str, str | list[str]]:
         key, sep, value = item.partition("=")
         if not sep or not key:
             raise StoreError(f"expected key=value, got '{item}'")
-        value = value.strip()
-        values[key.strip()] = (
-            [v.strip() for v in value[1:-1].split(",") if v.strip()]
-            if value.startswith("[") and value.endswith("]")
-            else value
-        )
+        values[key.strip()] = frontmatter.parse_value(value)
     return values
 
 
@@ -127,7 +123,7 @@ def cmd_new(args, ws: Workspace) -> int:
         )
         print(f"{did} {store.decisions_path}")
         return 0
-    kind = schema.KINDS[args.kind]
+    kind = store.schema.kinds[args.kind]
     values = _pairs(args.set or [])
     today = dt.date.today().isoformat()
     defaults = {
@@ -166,7 +162,7 @@ def cmd_schema(args, ws: Workspace) -> int:
 
     path = ws.ops / "SCHEMA.md"
     current = path.read_text(encoding="utf-8")
-    updated = check.fill_schema_blocks(current)
+    updated = check.fill_schema_blocks(current, Store(ws.ops).schema.blocks)
     if args.check:
         if updated != current:
             print(f"error: {path} is out of date; run `uo schema`", file=sys.stderr)
@@ -226,6 +222,7 @@ def cmd_setup(args, ws: Workspace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from unfloat_os import ids, migrate, status
     from unfloat_os.channels import discord, gmail
 
     parser = argparse.ArgumentParser(
@@ -245,7 +242,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(handler=cmd_render)
 
     p = sub.add_parser("new", help="create a record with the next free ID")
-    p.add_argument("kind", choices=(*schema.KINDS, "decision"))
+    p.add_argument("kind", choices=(*schema.KIND_NAMES, "decision"))
     p.add_argument("title")
     p.add_argument("--set", action="append", metavar="KEY=VALUE", help="frontmatter value; lists as [a, b]")
     p.add_argument("--body", help="note body (default: the kind's section template)")
@@ -261,7 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(handler=cmd_set)
 
     p = sub.add_parser("log", help="append one event to the monthly log")
-    p.add_argument("type", choices=schema.LOG_TYPES)
+    p.add_argument("type", help="event type from config/schema.toml in the records repository")
     p.add_argument("refs", help="comma-separated IDs, or -")
     p.add_argument("summary")
     p.add_argument("--date", help="YYYY-MM-DD (default: today)")
@@ -279,6 +276,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     gmail.register(sub)
     discord.register(sub)
+    migrate.register(sub)
+    status.register(sub)
+    ids.register(sub)
     return parser
 
 

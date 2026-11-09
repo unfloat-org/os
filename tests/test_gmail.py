@@ -6,6 +6,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from conftest import write_schema
 
 from unfloat_os.channels import ChannelError
 from unfloat_os.channels.gmail import (
@@ -41,6 +42,7 @@ MESSAGE = "Subject: A question\n\nHello,\n\nCould we talk?\n\nTo: first@example.
 
 @pytest.fixture
 def config(tmp_path: Path) -> GmailConfig:
+    write_schema(tmp_path)
     return GmailConfig(Store(tmp_path), tmp_path / "papers", tmp_path / "conf", "me@example.org")
 
 

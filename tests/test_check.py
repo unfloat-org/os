@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from conftest import DRAFT, PERSON, TASK, commit, git, rid, write_record
+from conftest import DRAFT, PERSON, TASK, commit, git, rid, write_record, write_schema
 
 from unfloat_os import check, frontmatter, guard, studies
+from unfloat_os.records import Store
 from unfloat_os.workspace import RepoConfig
 
 
@@ -33,13 +34,30 @@ def test_record_rules_report_errors_and_warnings(ws):
     assert "error: status 'done' needs a 'closed' date" in found
     assert "warning: open task has a 'closed' date" in found
     assert "error: owner 'somebody' must be founder, claude, an existing P-###" in found
-    assert (
-        "error: milestone 'moon' not in map, composition, clearance, rebuild, animal, measurement, community, "
-        "funding, ops, parked" in found
-    )
+    assert "error: milestone 'moon' not in ops, build, launch, parked" in found
     assert "error: unknown field(s): colour" in found
     assert "error: next_task 'T-099' must be an existing T-###" in found
     assert "warning: status implies contact but last_contact is empty" in found
+
+
+def test_a_milestone_missing_from_the_config_is_rejected_everywhere_it_is_used(ws):
+    write_record(ws.ops, "tasks", "T-001", "build", {**TASK, "milestone": "build"})
+    write_record(ws.ops, "people", rid("P", 1), "p", {**PERSON, "milestones": ["ops", "build"]})
+    assert messages(check.check_records(ws)[0]) == []
+    write_schema(ws.ops, milestones=["ops", "parked"])
+    assert messages(check.check_records(ws)[0]) == [
+        "error: milestones 'build' not in ops, parked",
+        "error: milestone 'build' not in ops, parked",
+    ]
+
+
+def test_log_types_come_from_the_config(ws):
+    log = ws.ops / "records/log/2026-11.md"
+    log.write_text(
+        log.read_text() + "- 2026-11-09 | alpha | - | fine\n- 2026-11-09 | note | - | gone from the config\n"
+    )
+    write_schema(ws.ops, log_types=["alpha"])
+    assert messages(check.check_records(ws)[0]) == ["error: unknown type 'note'"]
 
 
 def test_log_and_decisions_are_checked(ws):
@@ -54,16 +72,33 @@ def test_log_and_decisions_are_checked(ws):
     assert "error: D-001 is out of order" in found
 
 
+STALE_BLOCKS = "".join(
+    f"<!-- uo:{name} -->\nold\n<!-- /uo -->\n" for name in ("person", "task", "draft", "study", "log-types")
+)
+
+
 def test_schema_doc_must_match_the_schema(ws):
     doc = ws.ops / "SCHEMA.md"
-    stale = "".join(
-        f"<!-- uo:{name} -->\nold\n<!-- /uo -->\n" for name in ("person", "task", "draft", "study", "log-types")
-    )
-    doc.write_text(stale)
+    doc.write_text(STALE_BLOCKS)
     assert messages(check.check_schema_doc(ws)) == ["error: generated tables are out of date; run `uo schema`"]
-    doc.write_text(check.fill_schema_blocks(stale))
+    doc.write_text(check.fill_schema_blocks(STALE_BLOCKS, Store(ws.ops).schema.blocks))
     assert messages(check.check_schema_doc(ws)) == []
     assert "| `owner` | `founder` or `claude` or `P-###` | required; IDs must exist |" in doc.read_text()
+
+
+def test_schema_doc_lists_the_vocabulary_of_the_config(ws):
+    doc = ws.ops / "SCHEMA.md"
+    boss = '[owners.boss]\nname = "Boss"\nheading = "Boss: today"\n'
+    write_schema(ws.ops, milestones=["alpha", "beta"], log_types=["call", "note"], owners=boss)
+    doc.write_text(check.fill_schema_blocks(STALE_BLOCKS, Store(ws.ops).schema.blocks))
+    text = doc.read_text()
+    assert "| `milestone` | One of `alpha`, `beta` | required; vocabulary |" in text
+    assert "| `milestones` | Subset of `alpha`, `beta` | required; vocabulary |" in text
+    assert "| `owner` | `boss` or `P-###` | required; IDs must exist |" in text
+    assert "<!-- uo:log-types -->\n`call`, `note`\n<!-- /uo -->" in text
+    assert messages(check.check_schema_doc(ws)) == []
+    write_schema(ws.ops, milestones=["alpha"], log_types=["call", "note"], owners=boss)
+    assert messages(check.check_schema_doc(ws)) == ["error: generated tables are out of date; run `uo schema`"]
 
 
 def test_links_must_resolve_and_open_repos_must_not_link_out(ws):
@@ -137,6 +172,20 @@ def test_study_index_rules(ws):
     (research / "analysis" / "a9_reviewed" / "RESULT.md").write_text("r\n")
     found = messages(studies.check(RepoConfig.load(research)))
     assert found == ["error: missing STUDY.md", "error: status 'reviewed' needs a review file"]
+
+
+def test_analyses_are_checked_without_the_records_repository(ws):
+    (ws.ops / "config" / "schema.toml").unlink()  # public CI has no ops repository; the study kind needs no config
+    research = ws.members["research"].path
+    folder = research / "analysis" / "a9_done"
+    _study(folder, status="reviewed", prereg="none", result="RESULT.md", review="REVIEW.md")
+    (folder / "RESULT.md").write_text("r\n")
+    (folder / "REVIEW.md").write_text("r\n")
+    assert messages(studies.check(RepoConfig.load(research))) == []
+    _study(folder, status="finished", prereg="none", result="RESULT.md", review="REVIEW.md")
+    assert messages(studies.check(RepoConfig.load(research))) == [
+        "error: status 'finished' not in planned, preregistered, result, reviewed, published, dropped"
+    ]
 
 
 def test_guard_refuses_data_large_files_and_device_names(ws):

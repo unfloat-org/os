@@ -15,7 +15,8 @@ Reading is limited to threads that match the sent email drafts in records/drafts
 
 A draft file must have `channel: email`, a first body line `Subject: ...`, then
 the message, then one `To:` line with the addresses, optionally a `Cc:` line
-right after it (notes may follow). A draft with `reply_to: DR-###` in its
+right after it (notes may follow; the format lives in unfloat_os.drafts and `uo check` enforces it).
+A draft with `reply_to: DR-###` in its
 frontmatter is pushed as a reply inside that sent email's thread, answering the
 latest message there from someone else. A draft with `reply_thread: <Gmail thread
 id>` instead replies inside that thread (for a thread someone else started, used
@@ -53,8 +54,10 @@ from email.utils import getaddresses, parseaddr
 from html.parser import HTMLParser
 from pathlib import Path
 
-from unfloat_os import credentials, frontmatter, policy, schema
+from unfloat_os import credentials, frontmatter, schema
 from unfloat_os.channels import ChannelError
+from unfloat_os.drafts import DraftError, forbidden_marks
+from unfloat_os.drafts import read_email as parse_email
 from unfloat_os.http import HttpError, send
 from unfloat_os.records import Store
 from unfloat_os.workspace import Workspace
@@ -65,7 +68,6 @@ SCOPES = (COMPOSE, READONLY)
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
-EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 CONSENT_WAIT_S = 300
 BODY_CHARS = 1500
 # Where quoted earlier messages start in a reply body.
@@ -86,7 +88,7 @@ class GmailConfig:
 
     @property
     def drafts(self) -> Path:
-        return self.store.folder(schema.KINDS["draft"])
+        return self.store.folder(schema.DRAFT)
 
     def is_me(self, address: str) -> bool:
         return address.lower() == self.account.lower()
@@ -110,47 +112,20 @@ def draft_path(cfg: GmailConfig, draft_id: str) -> Path:
 
 
 def read_email(path: Path) -> dict:
-    text = path.read_text(encoding="utf-8")
+    """The parsed email draft file; the format is defined in `unfloat_os.drafts`."""
     try:
-        meta = frontmatter.parse(text)
-    except frontmatter.FrontmatterError as exc:
-        raise ChannelError(f"{path.name}: {exc}") from exc
-    if meta.get("channel") != "email":
-        raise ChannelError(f"{path.name}: channel is {meta.get('channel')!r}, not 'email'")
-    lines = frontmatter.body(text).strip("\n").split("\n")
-    if not lines[0].startswith("Subject: "):
-        raise ChannelError(f"{path.name}: first body line must be 'Subject: ...'")
-    subject = lines[0].removeprefix("Subject: ").strip()
-    to_index = [i for i, line in enumerate(lines) if line.startswith("To: ")]
-    if len(to_index) != 1:
-        raise ChannelError(f"{path.name}: needs exactly one 'To:' line after the message, found {len(to_index)}")
-    to = EMAIL_RE.findall(lines[to_index[0]])
-    if not to:
-        raise ChannelError(f"{path.name}: no address on the 'To:' line")
-    after = lines[to_index[0] + 1] if to_index[0] + 1 < len(lines) else ""
-    cc = EMAIL_RE.findall(after) if after.startswith("Cc: ") else []
-    body = "\n".join(lines[1 : to_index[0]]).strip() + "\n"
-    return {
-        "id": meta.get("id"),
-        "file": path.name,
-        "status": meta.get("status"),
-        "created": meta.get("created"),
-        "to": to,
-        "cc": cc,
-        "reply_to": meta.get("reply_to") or None,
-        "reply_thread": meta.get("reply_thread") or None,
-        "subject": subject,
-        "body": body,
-    }
+        return parse_email(path)
+    except DraftError as exc:
+        raise ChannelError(str(exc)) from exc
 
 
 def load_draft(cfg: GmailConfig, draft_id: str) -> dict:
     draft = read_email(draft_path(cfg, draft_id))
     if draft["status"] in ("sent", "dropped"):
         raise ChannelError(f"{draft['file']}: status is {draft['status']!r}")
-    bad = policy.problems(draft["subject"] + draft["body"], "email")
-    if bad:
-        raise ChannelError(f"{draft['file']}: message contains {', '.join(map(repr, bad))}; fix the draft first")
+    refusal = forbidden_marks(draft)
+    if refusal:
+        raise ChannelError(f"{draft['file']}: {refusal}")
     return draft
 
 

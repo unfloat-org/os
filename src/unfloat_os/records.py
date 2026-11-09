@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import fcntl
+import functools
 import os
 import re
 import unicodedata
@@ -24,6 +25,7 @@ from pathlib import Path
 from unfloat_os import frontmatter, schema
 from unfloat_os.frontmatter import Meta, Value
 from unfloat_os.report import Report
+from unfloat_os.schema import Schema, SchemaError
 
 RECORDS = "records"
 
@@ -68,10 +70,14 @@ class Event:
 class Records:
     """A loaded snapshot of every record, with the problems found while reading."""
 
-    by_kind: dict[str, dict[str, Record]] = field(default_factory=lambda: {k: {} for k in schema.KINDS})
+    schema: Schema
+    by_kind: dict[str, dict[str, Record]] = field(init=False)
     decisions: dict[str, Decision] = field(default_factory=dict)
     events: list[Event] = field(default_factory=list)
     report: Report = field(default_factory=Report)
+
+    def __post_init__(self) -> None:
+        self.by_kind = {name: {} for name in self.schema.kinds}
 
     @property
     def people(self) -> dict[str, Record]:
@@ -86,7 +92,7 @@ class Records:
         return self.by_kind["draft"]
 
     def record(self, rid: str) -> Record | None:
-        kind = schema.BY_PREFIX.get(rid.split("-")[0])
+        kind = self.schema.by_prefix.get(rid.split("-")[0])
         return self.by_kind[kind.name].get(rid) if kind else None
 
     def exists(self, rid: str) -> bool:
@@ -127,6 +133,14 @@ class Store:
         self.root = root
         self.dir = root / RECORDS
 
+    @functools.cached_property
+    def schema(self) -> Schema:
+        """The kinds and vocabularies of `config/schema.toml`, read on first use."""
+        try:
+            return schema.load(self.root)
+        except SchemaError as error:
+            raise StoreError(str(error)) from error
+
     def folder(self, kind: schema.Kind) -> Path:
         return self.dir / kind.folder
 
@@ -152,7 +166,7 @@ class Store:
     # reading ---------------------------------------------------------------
 
     def path_of(self, rid: str) -> Path:
-        kind = schema.BY_PREFIX.get(rid.split("-")[0])
+        kind = self.schema.by_prefix.get(rid.split("-")[0])
         if kind is None or not schema.ID_RE.match(rid):
             raise StoreError(f"'{rid}' is not a record ID")
         files = sorted(self.folder(kind).glob(f"{rid}-*.md"))
@@ -163,12 +177,12 @@ class Store:
         return files[0]
 
     def load(self) -> Records:
-        records = Records()
+        records = Records(self.schema)
         report = records.report
         if not self.dir.is_dir():
             report.error(self.dir, "records folder not found")
             return records
-        for kind in schema.KINDS.values():
+        for kind in self.schema.kinds.values():
             for path in sorted(self.folder(kind).glob("*.md")):
                 where = path.relative_to(self.root)
                 try:
@@ -232,7 +246,7 @@ class Store:
                     records.report.error(where, f"invalid date {date}")
                 elif path.stem != date[:7]:
                     records.report.warning(where, f"dated {date} but filed in {path.name}")
-                if kind not in schema.LOG_TYPES:
+                if kind not in self.schema.log_types:
                     records.report.error(where, f"unknown type '{kind}'")
                 ids = () if refs.strip() == "-" else tuple(r.strip() for r in refs.split(",") if r.strip())
                 for rid in ids:
@@ -242,27 +256,44 @@ class Store:
 
     # writing ---------------------------------------------------------------
 
+    def _upstream_highest(self, prefix: str) -> int:
+        """Highest number already pushed by any clone (as of the last fetch); 0 without an upstream."""
+        from unfloat_os import ids  # ids imports records
+
+        return ids.highest_upstream(self.root, prefix)
+
     def next_id(self, kind: schema.Kind) -> str:
+        """One above every number here and every number already pushed, so clones rarely collide."""
         numbers = [
             int(m.group(1))
             for p in self.folder(kind).glob(f"{kind.prefix}-*.md")
             if (m := re.match(rf"{kind.prefix}-(\d{{3}})-", p.name))
         ]
-        return f"{kind.prefix}-{max(numbers, default=0) + 1:03d}"
+        highest = max(max(numbers, default=0), self._upstream_highest(kind.prefix))
+        return f"{kind.prefix}-{highest + 1:03d}"
 
-    def create(self, kind_name: str, title: str, values: Mapping[str, Value], body: str = "") -> Record:
-        """Create a record with the next free ID; refuses values outside the schema or missing required ones."""
-        kind = schema.KINDS[kind_name]
+    def _refuse(self, kind: schema.Kind, subject: str, values: Mapping[str, Value]) -> None:
+        """Reject fields outside the kind and words outside a vocabulary, before anything is written."""
         unknown = set(values) - {f.name for f in kind.fields}
         if unknown:
             raise StoreError(f"unknown field(s) for {kind.name}: {', '.join(sorted(unknown))}")
+        problems = [p for f in kind.fields if values.get(f.name) for p in f.vocabulary_problems(values[f.name])]
+        if problems:
+            raise StoreError(f"{subject}: {'; '.join(problems)}")
+
+    def create(self, kind_name: str, title: str, values: Mapping[str, Value], body: str = "") -> Record:
+        """Create a record with the next free ID; refuses values outside the schema or missing required ones."""
+        kind = self.schema.kinds.get(kind_name)
+        if kind is None:
+            raise StoreError(f"unknown kind '{kind_name}'; one of {', '.join(self.schema.kinds)}")
+        self._refuse(kind, kind_name, values)
         if not title.strip():
             raise StoreError(f"{kind.name} needs a {kind.title_key}")
         with self.lock():
             rid = self.next_id(kind)
             meta: Meta = {}
             for f in kind.fields:
-                meta[f.name] = values.get(f.name, [] if f.type in ("list", "vocab-list", "ref-list") else "")
+                meta[f.name] = values.get(f.name, f.empty())
             meta["id"] = rid
             meta[kind.title_key] = title.strip()
             missing = [f.name for f in kind.fields if f.required and not meta.get(f.name)]
@@ -277,10 +308,8 @@ class Store:
 
     def update(self, rid: str, values: Mapping[str, Value]) -> Record:
         path = self.path_of(rid)
-        kind = schema.BY_PREFIX[rid.split("-")[0]]
-        unknown = set(values) - {f.name for f in kind.fields}
-        if unknown:
-            raise StoreError(f"unknown field(s) for {kind.name}: {', '.join(sorted(unknown))}")
+        kind = self.schema.by_prefix[rid.split("-")[0]]
+        self._refuse(kind, rid, values)
         if "id" in values:
             raise StoreError("IDs never change")
         text = frontmatter.update(path.read_text(encoding="utf-8"), values)
@@ -294,7 +323,8 @@ class Store:
         with self.lock():
             text = self.decisions_path.read_text(encoding="utf-8")
             numbers = [int(m.group(1)) for m in re.finditer(r"^## D-(\d{3}) \|", text, re.M)]
-            did = f"D-{max(numbers, default=0) + 1:03d}"
+            highest = max(max(numbers, default=0), self._upstream_highest("D"))
+            did = f"D-{highest + 1:03d}"
             lines = [f"## {did} | {date.isoformat()} | {title.strip()}", ""]
             lines += [f"- {key}: {value}" for key, value in bullets.items() if value]
             self.decisions_path.write_text(text.rstrip("\n") + "\n\n" + "\n".join(lines) + "\n", encoding="utf-8")
@@ -302,8 +332,8 @@ class Store:
 
     def append_event(self, records: Records, date: dt.date, kind: str, refs: list[str], summary: str) -> Event:
         """Append one log line after validating it against the loaded records."""
-        if kind not in schema.LOG_TYPES:
-            raise StoreError(f"unknown log type '{kind}'; one of {', '.join(schema.LOG_TYPES)}")
+        if kind not in self.schema.log_types:
+            raise StoreError(f"unknown log type '{kind}'; one of {', '.join(self.schema.log_types)}")
         summary = summary.strip()
         if not summary or "\n" in summary:
             raise StoreError("the summary is one non-empty line")

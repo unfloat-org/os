@@ -25,6 +25,14 @@ def _bounds(text: str) -> tuple[int, int]:
     return 4, end
 
 
+def parse_value(raw: str) -> Value:
+    """One value as the block writes it: `[a, b]` is a list, anything else a string (stripped)."""
+    raw = raw.strip()
+    if raw.startswith("[") and raw.endswith("]"):
+        return [item.strip() for item in raw[1:-1].split(",") if item.strip()]
+    return raw
+
+
 def parse(text: str) -> Meta:
     start, end = _bounds(text)
     meta: Meta = {}
@@ -37,11 +45,7 @@ def parse(text: str) -> Meta:
             raise FrontmatterError(f"frontmatter line {number}: expected 'key: value'")
         if key in meta:
             raise FrontmatterError(f"frontmatter line {number}: duplicate key '{key}'")
-        value = value.strip()
-        if value.startswith("[") and value.endswith("]"):
-            meta[key] = [item.strip() for item in value[1:-1].split(",") if item.strip()]
-        else:
-            meta[key] = value
+        meta[key] = parse_value(value)
     return meta
 
 
@@ -76,4 +80,51 @@ def update(text: str, updates: Mapping[str, Value]) -> str:
         if key in pending:
             lines[index] = f"{key}: {format_value(pending.pop(key))}".rstrip()
     lines += [f"{key}: {format_value(value)}".rstrip() for key, value in pending.items()]
+    return text[:start] + "\n".join(lines) + text[end:]
+
+
+def _block(text: str) -> tuple[int, int, list[str]]:
+    start, end = _bounds(text)
+    parse(text)  # refuse to edit a block that does not parse
+    return start, end, text[start:end].splitlines()
+
+
+def _index(lines: list[str], key: str) -> int | None:
+    return next((i for i, line in enumerate(lines) if line.partition(":")[0].strip() == key), None)
+
+
+def remove(text: str, key: str) -> str:
+    """Delete a key and its line, keeping the order of the other lines and the body untouched."""
+    start, end, lines = _block(text)
+    index = _index(lines, key)
+    if index is None:
+        raise FrontmatterError(f"no key '{key}'")
+    del lines[index]
+    return text[:start] + "\n".join(lines) + text[end:]
+
+
+def rename(text: str, old: str, new: str) -> str:
+    """Give a key another name where it stands, keeping its value, the other lines and the body untouched."""
+    start, end, lines = _block(text)
+    index = _index(lines, old)
+    if index is None:
+        raise FrontmatterError(f"no key '{old}'")
+    if _index(lines, new) is not None:
+        raise FrontmatterError(f"key '{new}' already exists")
+    lines[index] = f"{new}:{lines[index].partition(':')[2]}"
+    return text[:start] + "\n".join(lines) + text[end:]
+
+
+def insert(text: str, key: str, value: Value, after: str | None = None) -> str:
+    """Add a new key right after the key `after` (first line when `after` is None); the rest stays untouched."""
+    start, end, lines = _block(text)
+    if _index(lines, key) is not None:
+        raise FrontmatterError(f"key '{key}' already exists")
+    position = 0
+    if after is not None:
+        found = _index(lines, after)
+        if found is None:
+            raise FrontmatterError(f"no key '{after}'")
+        position = found + 1
+    lines.insert(position, f"{key}: {format_value(value)}".rstrip())
     return text[:start] + "\n".join(lines) + text[end:]
