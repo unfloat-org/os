@@ -1,1 +1,5 @@
 visibility = "public"
+
+[guard]
+# The logo files are the only images this repository carries.
+allow = ["brand/*.png"]

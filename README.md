@@ -1,3 +1,5 @@
+<img src="brand/icon-512.png" width="96" alt="os logo">
+
 # unfloat os
 
 The operating tools of [unfloat](https://github.com/unfloat-org/unfloat), an open, non-profit project working toward a treatment for vitreous floaters. One command, `uo`, keeps the project's records consistent, checks every repository against the same rules, and puts drafts where a person reviews and sends them. Nothing here sends a message to anyone.
