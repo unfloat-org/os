@@ -1,7 +1,8 @@
 """The email draft file format, and the rules `uo check` enforces on email drafts before anything reaches Gmail.
 
 A draft with `channel: email` is a record whose body is: a first line `Subject: ...`, the message, one
-`To:` line with the addresses, optionally a `Cc:` line right after it; notes may follow. That is the
+`To:` line with the addresses, optionally a `Cc:` line right after it; notes may follow. Frontmatter
+`attachments: [path, ...]` names files in the private data folder to attach. That is the
 only format the Gmail adapter can push, so it is read here, once, and checked here for every draft
 that can still be sent (status `draft` or `approved`): the shape, and the channel's forbidden marks
 (`policy`). A broken draft is found by `uo check`, not when someone tries to push it.
@@ -74,9 +75,24 @@ def read_email(path: Path) -> dict:
         "cc": cc,
         "reply_to": meta.get("reply_to") or None,
         "reply_thread": meta.get("reply_thread") or None,
+        "attachments": list(meta.get("attachments") or []),
         "subject": subject,
         "body": body,
     }
+
+
+def attachment_problems(draft: dict) -> list[str]:
+    """Attachment paths that are not plain relative paths inside the private data folder.
+
+    Only `../data/private/` can be attached: patient data (`restricted/`) never leaves by email, and a path
+    must not climb out of the folder. Whether the files exist is checked when the draft is pushed.
+    """
+    bad = []
+    for name in draft["attachments"]:
+        path = Path(str(name))
+        if path.is_absolute() or ".." in path.parts or not path.parts:
+            bad.append(f"attachment {name!r} must be a path relative to the private data folder")
+    return bad
 
 
 def forbidden_marks(draft: dict) -> str | None:
@@ -123,6 +139,8 @@ def check_email_drafts(records: Records) -> Report:
             refusal = forbidden_marks(draft)
             if refusal:
                 report.error(where, refusal)
+            for problem in attachment_problems(draft):
+                report.error(where, problem)
         draft["where"] = where
         parsed[draft_id] = draft
         if status != "dropped":

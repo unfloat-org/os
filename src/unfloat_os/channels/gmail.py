@@ -16,6 +16,7 @@ Reading is limited to threads that match the sent email drafts in records/drafts
 A draft file must have `channel: email`, a first body line `Subject: ...`, then
 the message, then one `To:` line with the addresses, optionally a `Cc:` line
 right after it (notes may follow; the format lives in unfloat_os.drafts and `uo check` enforces it).
+Frontmatter `attachments: [path, ...]` attaches files from the private data folder.
 A draft with `reply_to: DR-###` in its
 frontmatter is pushed as a reply inside that sent email's thread, answering the
 latest message there from someone else. A draft with `reply_thread: <Gmail thread
@@ -40,6 +41,7 @@ import hashlib
 import html
 import http.server
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -56,7 +58,7 @@ from pathlib import Path
 
 from unfloat_os import credentials, frontmatter, schema
 from unfloat_os.channels import ChannelError
-from unfloat_os.drafts import DraftError, forbidden_marks
+from unfloat_os.drafts import DraftError, attachment_problems, forbidden_marks
 from unfloat_os.drafts import read_email as parse_email
 from unfloat_os.http import HttpError, send
 from unfloat_os.records import Store
@@ -89,6 +91,11 @@ class GmailConfig:
     @property
     def drafts(self) -> Path:
         return self.store.folder(schema.DRAFT)
+
+    @property
+    def private(self) -> Path:
+        """The private data folder; email attachments are named relative to it."""
+        return self.papers.parent
 
     def is_me(self, address: str) -> bool:
         return address.lower() == self.account.lower()
@@ -126,7 +133,31 @@ def load_draft(cfg: GmailConfig, draft_id: str) -> dict:
     refusal = forbidden_marks(draft)
     if refusal:
         raise ChannelError(f"{draft['file']}: {refusal}")
+    draft["files"] = attachment_files(cfg, draft)
     return draft
+
+
+# Gmail refuses messages over 25 MB; base64 adds a third, so the files themselves must stay well below.
+ATTACH_LIMIT = 18 * 1024 * 1024
+
+
+def attachment_files(cfg: GmailConfig, draft: dict) -> list[Path]:
+    """The draft's attachments as existing files inside the private data folder, or a ChannelError."""
+    problems = attachment_problems(draft)
+    if problems:
+        raise ChannelError(f"{draft['file']}: {'; '.join(problems)}")
+    root = cfg.private.resolve()
+    files = []
+    for name in draft["attachments"]:
+        path = (root / str(name)).resolve()
+        if not path.is_relative_to(root):
+            raise ChannelError(f"{draft['file']}: attachment {name!r} is outside {root}")
+        if not path.is_file():
+            raise ChannelError(f"{draft['file']}: attachment {name!r} not found in {root}")
+        files.append(path)
+    if sum(f.stat().st_size for f in files) > ATTACH_LIMIT:
+        raise ChannelError(f"{draft['file']}: attachments exceed {ATTACH_LIMIT // (1024 * 1024)} MB")
+    return files
 
 
 def html_body(text: str) -> str:
@@ -148,6 +179,10 @@ def raw_message(draft: dict, target: dict | None = None) -> str:
         msg["References"] = target["references"]
     msg.set_content(draft["body"])
     msg.add_alternative(html_body(draft["body"]), subtype="html")
+    for path in draft.get("files", []):
+        kind, _ = mimetypes.guess_type(path.name)
+        maintype, subtype = (kind or "application/octet-stream").split("/", 1)
+        msg.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
     return base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
 
 
@@ -359,9 +394,10 @@ def cmd_push(args, ws: Workspace) -> int:
                 result = call("POST", f"{API}/drafts", payload, token)
                 verb = "created"
             where = f" (reply in the {draft['reply_to'] or 'given'} thread)" if target else ""
+            files = f" with {', '.join(f.name for f in draft['files'])}" if draft["files"] else ""
             print(
                 f"{draft['id']}: {verb} Gmail draft {result['id']} to {', '.join(draft['to'])}{where}: "
-                f"{draft['subject']}"
+                f"{draft['subject']}{files}"
             )
     return 1 if problems else 0
 

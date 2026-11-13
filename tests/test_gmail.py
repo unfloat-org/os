@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import email
+import email.policy
 import textwrap
 from pathlib import Path
 
@@ -14,6 +17,7 @@ from unfloat_os.channels.gmail import (
     html_body,
     html_to_text,
     load_draft,
+    raw_message,
     read_email,
     trim_quoted,
     unwrap,
@@ -162,3 +166,29 @@ def test_html_to_text_turns_divs_into_lines():
 def test_html_to_text_numbers_ordered_lists_and_dashes_bullets():
     markup = "<div>Options:</div><ol><li>one</li><li>two</li></ol><ul><li>red</li><li>blue</li></ul>"
     assert html_to_text(markup) == "Options:\n1. one\n2. two\n- red\n- blue"
+
+
+def test_load_draft_resolves_attachments_in_the_private_folder(config: GmailConfig):
+    (config.private / "invoices").mkdir(parents=True)
+    (config.private / "invoices" / "receipt.pdf").write_bytes(b"%PDF-1.4 test")
+    write_draft(drafts_folder(config), 1, body=MESSAGE, extra="attachments: [invoices/receipt.pdf]\n")
+    draft = load_draft(config, draft_id(1))
+    assert [f.name for f in draft["files"]] == ["receipt.pdf"]
+    raw = base64.urlsafe_b64decode(raw_message(draft))
+    message = email.message_from_bytes(raw, policy=email.policy.default)
+    parts = list(message.iter_attachments())
+    assert [(p.get_filename(), p.get_content_type()) for p in parts] == [("receipt.pdf", "application/pdf")]
+    assert parts[0].get_content() == b"%PDF-1.4 test"
+
+
+def test_load_draft_refuses_a_missing_attachment(config: GmailConfig):
+    write_draft(drafts_folder(config), 1, body=MESSAGE, extra="attachments: [invoices/none.pdf]\n")
+    with pytest.raises(ChannelError, match="not found"):
+        load_draft(config, draft_id(1))
+
+
+@pytest.mark.parametrize("name", ["../restricted/scan.cin", "/etc/passwd"])
+def test_load_draft_refuses_attachments_outside_the_private_folder(config: GmailConfig, name: str):
+    write_draft(drafts_folder(config), 1, body=MESSAGE, extra=f"attachments: [{name}]\n")
+    with pytest.raises(ChannelError, match="relative to the private data folder"):
+        load_draft(config, draft_id(1))

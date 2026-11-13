@@ -251,6 +251,7 @@ DRAFT = Kind(
         Field("created", "", "date", required=True),
         Field("reply_to", "Sent email draft this one answers (optional)", "ref", refs=("DR",)),
         Field("reply_thread", "Gmail thread ID of a thread someone else started (optional; instead of `reply_to`)"),
+        Field("attachments", "Files `uo gmail push` attaches, relative to the private data folder (optional)", "list"),
     ),
     body="The text, ready to copy. Only Daniil sets `approved` or `sent`.",
 )
