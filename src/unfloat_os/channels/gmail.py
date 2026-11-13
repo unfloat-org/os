@@ -534,6 +534,8 @@ def show_messages(cfg: GmailConfig, messages: list[dict]) -> None:
             continue
         replies += 1
         print(f"   -- {when(message)} from {name or addr} <{addr}>: {header(message, 'Subject')}")
+        if header(message, "Cc"):
+            print(f"      cc: {header(message, 'Cc')}")
         body = message_text(message.get("payload", {}))
         if len(body) > BODY_CHARS:
             body = body[:BODY_CHARS] + " [...]"
