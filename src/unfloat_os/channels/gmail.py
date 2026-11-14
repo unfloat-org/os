@@ -19,7 +19,8 @@ right after it (notes may follow; the format lives in unfloat_os.drafts and `uo 
 Frontmatter `attachments: [path, ...]` attaches files from the private data folder.
 A draft with `reply_to: DR-###` in its
 frontmatter is pushed as a reply inside that sent email's thread, answering the
-latest message there from someone else. A draft with `reply_thread: <Gmail thread
+latest message there from someone else; when nobody has answered yet it follows
+up on the sent email itself (a reminder). A draft with `reply_thread: <Gmail thread
 id>` instead replies inside that thread (for a thread someone else started, used
 only when Daniil asks to answer it). Drafts carry an HTML part, so Gmail
 opens and sends them as rich text instead of hard-wrapped plain text.
@@ -342,23 +343,28 @@ def drafts_with_subject(token: str, subject: str) -> list[str]:
 
 
 def reply_target(cfg: GmailConfig, token: str, parent: dict) -> dict:
-    """The latest message from someone else in the thread of the parent's sent email."""
+    """What a reply to the parent's sent email answers: the latest message from someone else in
+    its thread, or the sent email itself while nobody has answered (a reminder)."""
     sent = sent_message(cfg, token, parent, email_subjects(cfg) - {parent["subject"]})
     if sent is None:
         raise ChannelError(f"{parent['id']}: its sent email was not found, so there is no thread to reply in")
-    return thread_target(cfg, token, sent["threadId"], parent["id"])
+    return thread_target(cfg, token, sent["threadId"], parent["id"], follow_up=True)
 
 
-def thread_target(cfg: GmailConfig, token: str, thread_id: str, label: str) -> dict:
-    """The latest message from someone else in a Gmail thread, as In-Reply-To/References for a reply."""
+def thread_target(cfg: GmailConfig, token: str, thread_id: str, label: str, follow_up: bool = False) -> dict:
+    """The latest message from someone else in a Gmail thread, as In-Reply-To/References for a reply.
+
+    With `follow_up`, a thread nobody else has written in is answered at Daniil's own latest
+    sent message; Gmail drafts sitting in the thread are never the target."""
     thread = call("GET", f"{API}/threads/{thread_id}?format=metadata", token=token)
-    theirs = [m for m in thread.get("messages", []) if not cfg.is_me(parseaddr(header(m, "From"))[1])]
-    if not theirs:
+    messages = [m for m in thread.get("messages", []) if "DRAFT" not in m.get("labelIds", [])]
+    theirs = [m for m in messages if not cfg.is_me(parseaddr(header(m, "From"))[1])]
+    if not theirs and not (follow_up and messages):
         raise ChannelError(f"{label}: nobody else has written in that thread")
-    last = max(theirs, key=lambda m: int(m["internalDate"]))
+    last = max(theirs or messages, key=lambda m: int(m["internalDate"]))
     message_id = header(last, "Message-ID")
     references = " ".join(part for part in (header(last, "References"), message_id) if part)
-    return {"thread": thread_id, "in_reply_to": message_id, "references": references}
+    return {"thread": thread_id, "in_reply_to": message_id, "references": references, "follow_up": not theirs}
 
 
 def cmd_push(args, ws: Workspace) -> int:
@@ -393,7 +399,8 @@ def cmd_push(args, ws: Workspace) -> int:
             else:
                 result = call("POST", f"{API}/drafts", payload, token)
                 verb = "created"
-            where = f" (reply in the {draft['reply_to'] or 'given'} thread)" if target else ""
+            kind = "follow-up, nobody has answered yet," if target and target["follow_up"] else "reply"
+            where = f" ({kind} in the {draft['reply_to'] or 'given'} thread)" if target else ""
             files = f" with {', '.join(f.name for f in draft['files'])}" if draft["files"] else ""
             print(
                 f"{draft['id']}: {verb} Gmail draft {result['id']} to {', '.join(draft['to'])}{where}: "

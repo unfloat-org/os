@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from conftest import write_schema
 
-from unfloat_os.channels import ChannelError
+from unfloat_os.channels import ChannelError, gmail
 from unfloat_os.channels.gmail import (
     GmailConfig,
     html_body,
@@ -19,6 +19,7 @@ from unfloat_os.channels.gmail import (
     load_draft,
     raw_message,
     read_email,
+    thread_target,
     trim_quoted,
     unwrap,
 )
@@ -192,3 +193,47 @@ def test_load_draft_refuses_attachments_outside_the_private_folder(config: Gmail
     write_draft(drafts_folder(config), 1, body=MESSAGE, extra=f"attachments: [{name}]\n")
     with pytest.raises(ChannelError, match="relative to the private data folder"):
         load_draft(config, draft_id(1))
+
+
+def thread_message(sender: str, sent_at: int, message_id: str, labels: tuple[str, ...] = ()) -> dict:
+    headers = [{"name": "From", "value": sender}, {"name": "Message-ID", "value": message_id}]
+    return {"internalDate": str(sent_at), "labelIds": list(labels), "payload": {"headers": headers}}
+
+
+def serve_thread(monkeypatch: pytest.MonkeyPatch, *messages: dict) -> None:
+    monkeypatch.setattr(gmail, "call", lambda *args, **kwargs: {"messages": list(messages)})
+
+
+def test_a_reply_answers_the_latest_message_from_someone_else(config: GmailConfig, monkeypatch: pytest.MonkeyPatch):
+    serve_thread(
+        monkeypatch,
+        thread_message("Me <me@example.org>", 1, "<sent>"),
+        thread_message("Ann <ann@example.com>", 2, "<first-answer>"),
+        thread_message("Ann <ann@example.com>", 3, "<second-answer>"),
+        thread_message("Me <me@example.org>", 4, "<my-reply>"),
+    )
+    target = thread_target(config, "token", "thread-1", draft_id(1), follow_up=True)
+    assert target["in_reply_to"] == "<second-answer>"
+    assert target["follow_up"] is False
+
+
+def test_a_reminder_follows_up_on_the_sent_email_when_nobody_answered(
+    config: GmailConfig, monkeypatch: pytest.MonkeyPatch
+):
+    serve_thread(
+        monkeypatch,
+        thread_message("Me <me@example.org>", 1, "<sent>"),
+        thread_message("Me <me@example.org>", 5, "<reminder-draft>", labels=("DRAFT",)),
+    )
+    target = thread_target(config, "token", "thread-1", draft_id(1), follow_up=True)
+    assert target["in_reply_to"] == "<sent>"
+    assert target["references"] == "<sent>"
+    assert target["follow_up"] is True
+
+
+def test_a_reply_in_a_named_thread_needs_a_message_from_someone_else(
+    config: GmailConfig, monkeypatch: pytest.MonkeyPatch
+):
+    serve_thread(monkeypatch, thread_message("Me <me@example.org>", 1, "<sent>"))
+    with pytest.raises(ChannelError, match="nobody else has written"):
+        thread_target(config, "token", "thread-1", draft_id(1))
