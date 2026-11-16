@@ -191,7 +191,7 @@ label = "Harvest"
 ### Adding a series
 
 1. Write `config/video/<name>.toml` in the records repository and run `uo check`.
-2. Have the reporting repository write its figures and clips under the data folder, inside the series' `data.allow` (figures 2400x1350 PNG on the theme's background, clips 1920x1080 H.264 at 30 fps without audio, colours from `renderer/theme.json` read by path).
+2. Have the reporting repository write its figures and clips under the data folder, inside the series' `data.allow` (sizes and colours as in "Theme and the media box" below: read `renderer/theme.json` by path, keep no copy of its values).
 3. `uo video new <name> "title"`, write the scenes, `uo video check`, `uo video build`.
 
 No engine change is needed.
@@ -239,6 +239,27 @@ Timing: a narrated scene lasts a lead of 0.4 seconds, its speech, and a tail of 
 | `file` | `options.path`: a WAV, or a folder of `<scene id>.wav` | A recorded narration; not cached, no lexicon |
 
 `--provider` and `--voice` on `uo video build` override the series for one build; `run_meta.json` records what was used. The lexicon of a series is spelled for the provider it was written for.
+
+## Theme and the media box (contract C7)
+
+`renderer/theme.json` is the one source of the look: colours (`color`), the font (`font`) and the frame geometry (`layout`). The renderer draws every video in it, the manifest carries no theme, and a reporting repository reads the file by path and keeps no copy of its values. A change of any value needs the maintainer's OK and a re-export of the figures made with the old one.
+
+```json
+"layout": { "frame": [1920, 1080], "media": { "one": [1728, 600], "two": [852, 600], "gap": 24 } }
+```
+
+The media box is where a media scene's items are drawn, in frame pixels. A one-item scene has one box of `media.one`; a two-item scene has two boxes of `media.two`, `gap` apart; the boxes are centred and their row is as wide as the headline. An item whose aspect equals its box's (within 1 %; with `zoom`, the aspect of the zoomed part) is drawn at exactly the box size, so text in a figure lands at a known size in the frame. Any other item is fitted inside its box, centred, on the background colour, never cropped. `zoom` and `highlight` work in box coordinates.
+
+Export sizes that follow from the boxes:
+
+| Where | Figure (PNG, on the `bg` colour) | Clip (MP4 H.264 yuv420p, 30 fps, no audio) |
+| --- | --- | --- |
+| one-item scene | 2400x833 | 1920x666 |
+| two-item scene, each item | 1200x845 | 960x676 |
+
+Figures have no title inside (the scene headline carries the message), one message each, no text smaller than 44 px (about 32 px in the frame in a one-item scene), axis labels about 56 px, `data` colours in order, `accent` for the one thing to look at, no case id, date, stem or file name. A figure drawn for the box has no margin to give away: keep its own padding inside the figure.
+
+Under the box runs one muted line of at most 40 px that joins the item labels and the caption: one item, `label · caption`; two items, each label centred under its own box; two items with a caption, one centred line across both boxes (`label · label · caption`), because the caption is never dropped and the line stays one line. The headline of a media scene is one line: its size steps down from 68 to 40 px, and a headline that does not fit one line at 40 px (or a line under the box that does not fit at 24 px) is refused by the renderer with the path of the field (`scenes[3].props.headline: does not fit one line at 40 px: shorten it`). It is decided in the browser, where Inter is measured, before anything is drawn.
 
 ## The build folder and the renderer (contract C3)
 

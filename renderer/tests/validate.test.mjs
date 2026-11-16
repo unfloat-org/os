@@ -58,22 +58,22 @@ const broken = [
   [
     "more than four rows",
     (m) => (sceneOf(m, "next-steps").props.rows = ["a", "b", "c", "d", "e"]),
-    "scenes[11].props.rows",
+    "scenes[12].props.rows",
   ],
   [
     "a pairs row that is a string",
     (m) => (sceneOf(m, "results-pairs").props.rows[1] = "just text"),
-    "scenes[9].props.rows[1]",
+    "scenes[10].props.rows[1]",
   ],
   [
     "a bullets row that is a pair",
     (m) => (sceneOf(m, "next-asks").props.rows[0] = { left: "a", right: "b" }),
-    "scenes[12].props.rows[0]",
+    "scenes[13].props.rows[0]",
   ],
   [
     "a column title on a bullets list",
     (m) => (sceneOf(m, "next-asks").props.left_title = "Left"),
-    "scenes[12].props.left_title",
+    "scenes[13].props.left_title",
   ],
   [
     "roadmap step that does not exist",
@@ -88,7 +88,7 @@ const broken = [
   [
     "scene in a chapter that is not listed",
     (m) => (sceneOf(m, "limits").chapter = "appendix"),
-    "scenes[10].chapter",
+    "scenes[11].chapter",
   ],
   [
     "scenes out of chapter order",
@@ -98,7 +98,7 @@ const broken = [
   [
     "two scenes with one id",
     (m) => (sceneOf(m, "limits").id = "goal"),
-    "scenes[10].id",
+    "scenes[11].id",
   ],
   ["scene id that is not a safe name", (m) => (m.scenes[0].id = "../title"), "scenes[0].id"],
   [
@@ -139,12 +139,12 @@ const broken = [
   [
     "clip without its length",
     (m) => delete sceneOf(m, "results-walk").props.items[0].seconds,
-    "scenes[8].props.items[0].seconds",
+    "scenes[9].props.items[0].seconds",
   ],
   [
     "clip trimmed past its end",
     (m) => (sceneOf(m, "results-walk").props.items[0].end = 30),
-    "scenes[8].props.items[0].end",
+    "scenes[9].props.items[0].end",
   ],
   [
     "three media items",
@@ -211,7 +211,7 @@ test("scene lengths are rounded to frames one by one, and the video is their sum
 
 test("the fixture's length is the sum of its scene lengths", () => {
   const m = fixtureManifest();
-  assert.equal(totalFrames(m.scenes, m.fps), 97 * 30);
+  assert.equal(totalFrames(m.scenes, m.fps), 104 * 30);
 });
 
 const render = (...args) =>

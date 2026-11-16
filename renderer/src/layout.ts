@@ -1,9 +1,10 @@
-// Frame geometry and text fitting. Everything is drawn on a 1920x1080 frame.
+// Frame geometry and text fitting. The frame size comes from theme.json (layout.frame).
 import { measureText } from "@remotion/layout-utils";
+import { FRAME_H, FRAME_W } from "./mediabox.ts";
 import { FONT_FAMILY } from "./theme.ts";
 
-export const WIDTH = 1920;
-export const HEIGHT = 1080;
+export const WIDTH = FRAME_W;
+export const HEIGHT = FRAME_H;
 export const MARGIN_X = 96;
 /** Height reserved for the caption band; media never enters it. */
 export const CAPTION_BAND = 196;
