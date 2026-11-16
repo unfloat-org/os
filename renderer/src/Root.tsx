@@ -1,5 +1,7 @@
 import React from "react";
 import { Composition, type CalculateMetadataFunction } from "remotion";
+import { checkMediaText } from "./fitcheck.ts";
+import { loadFaces } from "./fonts.tsx";
 import type { Manifest } from "./manifest.ts";
 import { totalFrames } from "./timing.ts";
 import { Update, type UpdateProps } from "./Update.tsx";
@@ -30,14 +32,19 @@ const placeholder: Manifest = {
   ],
 };
 
-const calculateMetadata: CalculateMetadataFunction<UpdateProps> = ({
+const calculateMetadata: CalculateMetadataFunction<UpdateProps> = async ({
   props,
-}) => ({
-  durationInFrames: totalFrames(props.manifest.scenes, props.manifest.fps),
-  fps: props.manifest.fps,
-  width: props.manifest.width,
-  height: props.manifest.height,
-});
+}) => {
+  // text is measured with Inter: refuse what cannot be one line before drawing anything
+  await loadFaces();
+  return {
+    props: { ...props, fitError: checkMediaText(props.manifest) },
+    durationInFrames: totalFrames(props.manifest.scenes, props.manifest.fps),
+    fps: props.manifest.fps,
+    width: props.manifest.width,
+    height: props.manifest.height,
+  };
+};
 
 export const RemotionRoot: React.FC = () => (
   <Composition

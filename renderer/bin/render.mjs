@@ -158,6 +158,10 @@ const main = async () => {
       id: COMPOSITION,
       puppeteerInstance: browser,
     });
+    // text that cannot be one line is decided in the browser, where Inter is measured
+    if (composition.props.fitError) {
+      throw new Error(`manifest.json: ${composition.props.fitError}`);
+    }
     const spans = sceneSpans(manifest.scenes, manifest.fps);
     if (composition.durationInFrames !== totalFrames(manifest.scenes, manifest.fps)) {
       throw new Error("composition length differs from the sum of scene lengths");

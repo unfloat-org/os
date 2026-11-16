@@ -8,7 +8,8 @@ import { SceneView } from "./Scene.tsx";
 import { color } from "./theme.ts";
 import { sceneSpans } from "./timing.ts";
 
-export type UpdateProps = { manifest: Manifest };
+/** `fitError` is set by the composition's metadata step (fitcheck.ts) and read by bin/render.mjs. */
+export type UpdateProps = { manifest: Manifest; fitError?: string | null };
 
 /** The whole video: its scenes in order, with the frame furniture on top. */
 export const Update: React.FC<UpdateProps> = ({ manifest }) => {

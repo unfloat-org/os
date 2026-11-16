@@ -11,5 +11,9 @@
     "neutral": "#8E8598",
     "detect": "#3FE0FF"
   },
-  "font": { "family": "Inter", "fallback": "Helvetica Neue, Arial, sans-serif" }
+  "font": { "family": "Inter", "fallback": "Helvetica Neue, Arial, sans-serif" },
+  "layout": {
+    "frame": [1920, 1080],
+    "media": { "one": [1728, 600], "two": [852, 600], "gap": 24 }
+  }
 }

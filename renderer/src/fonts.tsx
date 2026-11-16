@@ -29,6 +29,24 @@ const faces: { url: string; weight: string; range: string }[] = [
   { url: ext700, weight: "700", range: LATIN_EXT },
 ];
 
+let loading: Promise<unknown> | null = null;
+
+/** Loads every face once; measuring text needs it (the composition's metadata and FontGate). */
+export const loadFaces = (): Promise<unknown> => {
+  loading ??= Promise.all(
+    faces.map((face) =>
+      loadFont({
+        family: FONT_FAMILY,
+        url: face.url,
+        weight: face.weight,
+        unicodeRange: face.range,
+        format: "woff2",
+      }),
+    ),
+  );
+  return loading;
+};
+
 /** Holds the render until every face is loaded, so text is measured with Inter. */
 export const FontGate: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -38,17 +56,7 @@ export const FontGate: React.FC<{ children: React.ReactNode }> = ({
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    Promise.all(
-      faces.map((face) =>
-        loadFont({
-          family: FONT_FAMILY,
-          url: face.url,
-          weight: face.weight,
-          unicodeRange: face.range,
-          format: "woff2",
-        }),
-      ),
-    )
+    loadFaces()
       .then(() => {
         setReady(true);
         continueRender(handle);

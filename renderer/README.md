@@ -42,7 +42,7 @@ The contract (C3) is written in `docs/video.md`; the renderer's statement of it 
 | --- | --- |
 | `title` | title, subtitle, meta line |
 | `statement` | a headline of up to 120 characters and up to three points |
-| `media` | one or two images or clips, with `zoom`, `highlight` boxes, `label`, `caption`; clips trimmed by `start` and `end`, looped or held on their last frame |
+| `media` | one or two images or clips in the media box (below), with `zoom`, `highlight` boxes, `label`, `caption`; clips trimmed by `start` and `end`, looped or held on their last frame |
 | `number` | one large value with its label and denominator |
 | `list` | up to four rows as `bullets`, `numbered` or `pairs` (with column titles) |
 | `roadmap` | the series' steps as done, current and upcoming |
@@ -65,8 +65,9 @@ clipped. Transitions are short fades inside each scene's own length.
 | Look at the fixture in the Studio | `npm run studio` |
 
 The fixture is an invented series (a meadow trial). It uses every kind, a list in
-all three styles, a two-item media scene, a zoomed and highlighted image, a looped
-and a held clip, and long text that has to be fitted. Rendered output goes to
+all three styles, two-item media scenes, a zoomed and highlighted image, a looped
+and a held clip, long text that has to be fitted, media at the box aspects
+(2400x833, 1920x666, 1200x845, 960x676) and one 16:9 item that shows the fitted case. Rendered output goes to
 `out/` (gitignored).
 
 ## Add a kind
@@ -74,7 +75,7 @@ and a held clip, and long text that has to be fitted. Rendered output goes to
 1. `src/manifest.ts`: a zod schema for its props (strict), added to `KINDS`, to
    the scene union and to the exported types.
 2. `src/kinds/<Name>.tsx`: the component. It draws inside `useFrameInfo().box`
-   (the area above the caption band), takes sizes from `layout.ts` and colours
+   (the area above the caption band; a media scene lays itself out with `mediabox.ts`), takes sizes from `layout.ts` and colours
    from `theme.ts`, and fits text with `FitText` instead of clipping.
 3. `src/Scene.tsx`: one `case` in `Layout` (TypeScript flags the missing one).
 4. `fixtures/manifest.mjs`: a scene that uses it; `tests/validate.test.mjs`: the
@@ -89,6 +90,43 @@ every video in it; the manifest carries no theme. Reporting repositories read th
 file by path (`--theme <repo>/renderer/theme.json`) and keep no copy of the
 values. A change of any value needs the supervisor's OK first and re-exporting
 the figures made with the old one.
+
+## Media box (C7)
+
+`theme.json` also carries the frame geometry that exporters need:
+
+```json
+"layout": { "frame": [1920, 1080], "media": { "one": [1728, 600], "two": [852, 600], "gap": 24 } }
+```
+
+A media scene is a one-line headline, the media, and one muted info line.
+`src/mediabox.ts` holds the arithmetic (pure, tested without a browser):
+
+- The item of a one-item scene is drawn in a box of `media.one` (1728x600 frame
+  pixels); each item of a two-item scene in a box of `media.two` (852x600), the
+  boxes `gap` (24) apart, centred. The boxes sit at y = 208, below the headline
+  row and above the info line, clear of the caption band.
+- An item whose aspect equals its box's (within 1 %; with `zoom`, the aspect of
+  the shown part) is drawn at exactly the box size. Any other item is fitted
+  inside the box, centred, on `bg`. `zoom` and `highlight` work in box
+  coordinates.
+- Export sizes for reporting repositories: figures 2400x833 (one item) and
+  1200x845 (two items); clips 1920x666 and 960x676 (H.264 yuv420p, 30 fps, no
+  audio). A 2400 px figure is drawn at 0.72, so 44 px of text is about 32 px in
+  the frame.
+- One muted line under the box, 40 px high at most, joins the labels and the
+  caption: one item, `label · caption`; two items, each label centred under its
+  own box, or, with a caption, one line `label · label · caption` across both.
+- The headline takes one line; its size steps down from 68 to 40 px. A headline
+  (or a line under the box) that cannot be one line at the smallest size is
+  refused with the field path (`error: manifest.json: scenes[3].props.headline:
+  does not fit one line at 40 px: shorten it`). The check runs in the browser
+  (`src/fitcheck.ts`, in the composition's metadata step), where Inter is
+  measured, and `bin/render.mjs` reports it.
+
+`npm test` checks that the numbers come from `theme.json` and that a box-aspect
+item is placed at exactly the box size; `npm run test:render` renders solid-colour
+items and measures their boxes on the pixels of the stills.
 
 ## Licence
 

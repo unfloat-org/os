@@ -64,10 +64,10 @@ for (const [rel, spec] of Object.entries(fixtureMedia)) {
   const file = path.join(out, rel);
   const size = `${spec.width}x${spec.height}`;
   if (spec.kind === "clip") {
-    // a box sweeping over the background, 30 fps, no audio, H.264 yuv420p
+    // a box sweeping over the background (sizes relative to the clip), 30 fps, no audio, H.264 yuv420p
     ffmpeg([
       "-f", "lavfi", "-i", `color=c=0x14101A:s=${size}:r=30:d=${spec.seconds}`,
-      "-vf", `drawbox=x='200+mod(t*500,1300)':y=380:w=280:h=280:c=${spec.shade}:t=fill`,
+      "-vf", `drawbox=x='${Math.round(spec.width * 0.08)}+mod(t*${Math.round(spec.width * 0.25)},${Math.round(spec.width * 0.6)})':y=${Math.round(spec.height * 0.35)}:w=${Math.round(spec.height * 0.28)}:h=${Math.round(spec.height * 0.28)}:c=${spec.shade}:t=fill`,
       "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", file,
     ]);
   } else {

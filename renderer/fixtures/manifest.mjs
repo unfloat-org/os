@@ -3,15 +3,23 @@
 // two-item media scene, an image with zoom and highlights, clips trimmed and
 // looped or held, and long text that has to be fitted.
 
-const IMAGE = { width: 2400, height: 1350 };
-const CLIP_A = { seconds: 3, width: 1920, height: 1080 };
-const CLIP_B = { seconds: 4, width: 1920, height: 1080 };
+// Sizes follow the media boxes of renderer/theme.json (C7): a one-item scene
+// draws its item in 1728x600 (2400x833 and 1920x666 have that aspect), each item
+// of a two-item scene in 852x600 (1200x845 and 960x676). One item (FITTED) has
+// another aspect, so the fitted case is on screen too.
+const IMAGE = { width: 2400, height: 833 };
+const CLIP_A = { seconds: 3, width: 1920, height: 666 };
+const PAIR_IMAGE = { width: 1200, height: 845 };
+const PAIR_CLIP = { seconds: 4, width: 960, height: 676 };
+const FITTED = { width: 2400, height: 1350 };
 
 /** Files the fixture needs, written by fixtures/make.mjs (nothing is committed). */
 export const fixtureMedia = {
   "media/results-bees-1.png": { kind: "bars", ...IMAGE },
-  "media/results-compare-1.png": { kind: "dots", ...IMAGE },
-  "media/results-compare-2.mp4": { kind: "clip", ...CLIP_B, shade: "0x6CC5F0" },
+  "media/results-compare-1.png": { kind: "dots", ...PAIR_IMAGE },
+  "media/results-compare-2.mp4": { kind: "clip", ...PAIR_CLIP, shade: "0x6CC5F0" },
+  "media/results-fitted-1.png": { kind: "dots", ...FITTED },
+  "media/results-fitted-2.png": { kind: "bars", ...PAIR_IMAGE },
   "media/results-walk-1.mp4": { kind: "clip", ...CLIP_A, shade: "0xFFB454" },
 };
 
@@ -179,15 +187,15 @@ export const fixtureManifest = () => ({
           {
             src: "media/results-compare-1.png",
             type: "image",
-            ...IMAGE,
-            zoom: [0.2, 0.15, 0.6, 0.7],
+            ...PAIR_IMAGE,
+            zoom: [0.2, 0.2, 0.6, 0.6],
             highlight: [[0.45, 0.4, 0.2, 0.25]],
             label: "Counts, enlarged",
           },
           {
             src: "media/results-compare-2.mp4",
             type: "video",
-            ...CLIP_B,
+            ...PAIR_CLIP,
             start: 0.5,
             end: 3.5,
             loop: true,
@@ -197,6 +205,31 @@ export const fixtureManifest = () => ({
       },
       8,
       ["On the left, the counts enlarged.", "On the right, a walk along the strip, looped."],
+    ),
+    scene(
+      "results-fitted",
+      "results",
+      "media",
+      {
+        headline: "An item of another shape is fitted inside its box",
+        items: [
+          {
+            src: "media/results-fitted-1.png",
+            type: "image",
+            ...FITTED,
+            label: "Wide figure, 16:9",
+          },
+          {
+            src: "media/results-fitted-2.png",
+            type: "image",
+            ...PAIR_IMAGE,
+            label: "Box-aspect figure",
+          },
+        ],
+        caption: "Margins as a grid, and the weekly counts",
+      },
+      7,
+      ["The first figure is 16 by 9, so it is fitted inside its box.", "The second has the box's shape and fills it."],
     ),
     scene(
       "results-walk",
