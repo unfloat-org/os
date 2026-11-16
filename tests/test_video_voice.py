@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import itertools
 import shutil
+import subprocess
 import wave
 from pathlib import Path
 
@@ -320,6 +321,23 @@ def test_say_voice_names_are_read_from_its_listing_with_spaces_and_brackets():
         "Bad News            en_US    # Hello! My name is Bad News.\n"
     )
     assert parse_voices(listing) == ["Daniel", "Eddy (English (UK))", "Bad News"]
+
+
+def test_say_accepts_a_voice_by_its_short_name(tmp_path, monkeypatch):
+    listing = "Daniel (English (UK)) en_GB    # Hello! My name is Daniel.\n"
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout=listing, stderr="")
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/say")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    from unfloat_os.channels.video.voice.say import Say
+
+    Say().check(VoiceSettings("say", "daniel"))
+    with pytest.raises(VoiceError, match="no voice named 'Danial'"):
+        Say().check(VoiceSettings("say", "Danial"))
 
 
 @pytest.mark.skipif(shutil.which("say") is None, reason="needs macOS say")

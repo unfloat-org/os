@@ -43,7 +43,9 @@ class Say:
         if settings.voice:  # `say` falls back to its default voice for an unknown name, silently
             listing = subprocess.run(["say", "-v", "?"], capture_output=True, text=True).stdout
             names = parse_voices(listing)
-            if names and settings.voice.casefold() not in {name.casefold() for name in names}:
+            # `say` also takes the short name: "Daniel" for "Daniel (English (UK))"
+            known = {name.casefold() for name in names} | {name.split(" (")[0].casefold() for name in names}
+            if names and settings.voice.casefold() not in known:
                 raise VoiceError(f"say: no voice named {settings.voice!r}; list them with `say -v '?'`")
 
     def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path) -> list[Path]:
