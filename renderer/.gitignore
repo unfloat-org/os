@@ -1,0 +1,11 @@
+node_modules
+dist
+.DS_Store
+.env
+.cache
+
+# Fixture build folder, render output, bundles and temp folders.
+fixtures/build
+out
+bundle
+tmp
