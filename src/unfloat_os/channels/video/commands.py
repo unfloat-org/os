@@ -12,7 +12,7 @@ import sys
 from unfloat_os import schema
 from unfloat_os.channels import ChannelError
 from unfloat_os.channels.video import build as building
-from unfloat_os.channels.video import checks, series, timing
+from unfloat_os.channels.video import checks, fit, series, timing
 from unfloat_os.channels.video.series import CHAPTERS, Series, SeriesError
 from unfloat_os.channels.video.storyboard import PLACEHOLDER
 from unfloat_os.records import Record, Records, Store, StoreError
@@ -136,6 +136,7 @@ def _summary(plan: checks.Plan) -> str:
 
 def cmd_check(args, ws: Workspace) -> int:
     plan = checks.prepare(ws, args.id)
+    fit.check(ws, plan)
     _print_issues(plan)
     if plan.report.errors:
         print(f"{len(plan.report.errors)} error(s)", file=sys.stderr)
@@ -148,6 +149,7 @@ def cmd_check(args, ws: Workspace) -> int:
 
 def cmd_build(args, ws: Workspace) -> int:
     plan = checks.prepare(ws, args.id)
+    fit.check(ws, plan)  # before anything is voiced: text that cannot fit is refused here, not at render time
     _print_issues(plan)
     if plan.report.errors:
         print(f"{len(plan.report.errors)} error(s); nothing built", file=sys.stderr)
@@ -162,6 +164,11 @@ def cmd_build(args, ws: Workspace) -> int:
     for use in result.restricted_by:
         print(
             f"restricted by: scene {use.scene}, item {use.n} ({use.ref}); not released by series '{plan.series.name}'"
+        )
+    if result.other is not None:
+        print(
+            f"note: an earlier build of {plan.record.id} in another output class is still in {result.other}; "
+            "this build did not touch it: delete it if it should not stay"
         )
     return 0
 

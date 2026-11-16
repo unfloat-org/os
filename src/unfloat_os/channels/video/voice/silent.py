@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from unfloat_os.channels.video.voice import audio
-from unfloat_os.channels.video.voice.model import VoiceSettings
+from unfloat_os.channels.video.voice.model import Keep, VoiceSettings
 
 DEFAULT_WORDS_PER_MINUTE = 140.0
 MIN_SECONDS = 0.4
@@ -26,10 +26,11 @@ class Silent:
         wpm = float(settings.options.get("words_per_minute", DEFAULT_WORDS_PER_MINUTE))  # type: ignore[arg-type]
         return max(MIN_SECONDS, len(text.split()) / (wpm * settings.speed / 60))
 
-    def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path) -> list[Path]:
+    def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path, keep: Keep) -> list[Path]:
         paths = []
         for index, text in enumerate(texts):
             path = work / f"{index}.wav"
             audio.write_wav(path, audio.silence(self.seconds_for(text, settings)))
             paths.append(path)
+            keep(index, path)
         return paths

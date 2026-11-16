@@ -27,11 +27,11 @@ from unfloat_os.channels import ChannelError
 from unfloat_os.channels.video import timing
 from unfloat_os.channels.video.checks import MediaUse, Plan
 from unfloat_os.channels.video.storyboard import CHAPTER_LABELS, Scene, screen_texts
-from unfloat_os.workspace import Workspace
+from unfloat_os.channels.video.voice.audio import RATE as SAMPLE_RATE  # the voice's WAV format (C4)
+from unfloat_os.workspace import DATA_CLASSES, Workspace, WorkspaceError
 
 MANIFEST_VERSION = 1
 WIDTH, HEIGHT = 1920, 1080
-SAMPLE_RATE = 48_000
 ENGINE_ONLY = ("kind", "sources", "numbers_ok", "seconds")
 RENDERER_ENV = "UNFLOAT_RENDERER"
 RENDERER_ENTRY = Path("bin") / "render.mjs"
@@ -143,6 +143,14 @@ def output_dir(ws: Workspace, plan: Plan) -> Path:
     return ws.data_dir(plan.data_class) / "updates" / plan.record.id
 
 
+def other_output(ws: Workspace, plan: Plan) -> Path | None:
+    """The folder of an earlier build of this draft in the other output class, if there is one: a build whose class
+    changed (a release added or withdrawn) leaves it as it was, so the user is told."""
+    other = "private" if plan.data_class == "restricted" else "restricted"
+    folder = ws.data_dir(other) / "updates" / plan.record.id
+    return folder if folder.is_dir() else None
+
+
 def default_meta(plan: Plan) -> str:
     number = schema.text(plan.record.meta, "number")
     return f"{plan.series.title} · Update {number} · {schema.text(plan.record.meta, 'created')}"
@@ -238,14 +246,27 @@ def captions_srt(timed: list[Timed]) -> str:
     return "\n".join(blocks)
 
 
-def transcript(plan: Plan, timed: list[Timed]) -> str:
+def travels(ws: Workspace, source: str) -> bool:
+    """Whether a source may be named in a file that travels with the video: a data-class reference, or a file of a
+    repository that is open or public. Records and private repositories stay in `run_meta.json` (S7)."""
+    root = source.partition(":")[0]
+    if root in DATA_CLASSES:
+        return True
+    try:
+        return root in ws.members and ws.repo(root).is_open
+    except WorkspaceError:
+        return False
+
+
+def transcript(ws: Workspace, plan: Plan, timed: list[Timed]) -> str:
+    """The narration by chapter, the on-screen text, the media by scene and the shareable sources. It travels with the
+    video, so it names no draft, no record and no media source file; `run_meta.json` keeps the full provenance."""
     meta = plan.record.meta
     total = sum(t.seconds for t in timed)
     out = [
         f"# {plan.series.title}: update {schema.text(meta, 'number')}",
         "",
-        f"{schema.text(meta, 'title')}. Draft {plan.record.id}, created {schema.text(meta, 'created')}, "
-        f"series `{plan.series.name}`, {timing.clock(total)}.",
+        f"{schema.text(meta, 'title')}. Created {schema.text(meta, 'created')}, {timing.clock(total)}.",
         "",
     ]
     chapter = None
@@ -255,19 +276,24 @@ def transcript(plan: Plan, timed: list[Timed]) -> str:
             chapter = scene.chapter
             out += [f"## {CHAPTER_LABELS.get(chapter, chapter)}", ""]
         out += [f"### {scene.id} ({timing.clock(t.start)}, {scene.kind})", ""]
-        screen = [text for text in screen_texts(scene_props(plan, scene))]
+        screen = list(screen_texts(scene.props))
+        if scene.kind == "title" and "meta" not in scene.props:
+            screen.append(default_meta(plan))
         if screen:
             out += ["On screen:", "", *(f"- {text}" for text in screen), ""]
         out += ["Narration:", "", *(f"{p}\n" for p in scene.paragraphs)] if scene.narration else ["No narration.", ""]
         figures = plan.media_of(scene.id)
         if figures:
-            out += ["Figures:", ""]
-            out += [f"- media/{u.build_name} ({u.info.type}){': ' + u.item['label'] if u.item.get('label') else ''}"
+            out += ["Media:", ""]
+            out += [f"- {scene.id}, item {u.n} ({u.info.type}){': ' + u.item['label'] if u.item.get('label') else ''}"
                     for u in figures]  # fmt: skip
             out.append("")
-        sources = scene.props.get("sources") or []
-        if sources:
-            out += ["Sources:", "", *(f"- `{s}`" for s in sources), ""]
+        sources = [s for s in scene.props.get("sources") or [] if isinstance(s, str)]
+        shown = [s for s in sources if travels(ws, s)]
+        if shown:
+            out += ["Sources:", "", *(f"- `{s}`" for s in shown), ""]
+        if len(shown) < len(sources):
+            out += [f"{len(sources) - len(shown)} internal source(s) left out (listed in run_meta.json).", ""]
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -283,6 +309,7 @@ class Result:
     voice: str = ""  # provider and voice used, for example "kokoro af_heart"
     voice_seconds: float = 0.0  # wall clock of the voice step
     voiced: int = 0  # sentences synthesized by this build (new files in the voice cache)
+    other: Path | None = None  # an earlier build of this draft in the other output class, left as it was
 
 
 def _fresh(folder: Path) -> Path:
@@ -354,7 +381,7 @@ def build(
                                      "--poster", str(poster)])  # fmt: skip
         srt, text = out / "captions.srt", out / "transcript.md"
         srt.write_text(captions_srt(timed), encoding="utf-8")
-        text.write_text(transcript(plan, timed), encoding="utf-8")
+        text.write_text(transcript(ws, plan, timed), encoding="utf-8")
         written += [video, srt, text, poster, *(stills / f"{t.scene.id}.png" for t in timed)]
     inputs = [("ops:" + plan.record.path.relative_to(ws.ops).as_posix(), plan.record.path)]
     inputs.append(("ops:" + plan.series.path.relative_to(ws.ops).as_posix(), plan.series.path))
@@ -398,4 +425,5 @@ def build(
         f"{settings.provider} {settings.voice}".strip(),
         voice_seconds,
         voiced,
+        other_output(ws, plan),
     )

@@ -200,3 +200,36 @@ def test_a_draft_naming_a_series_without_a_profile_is_an_error(vws):
 def test_sent_and_dropped_video_drafts_are_not_checked_for_shape(vws):
     garden(vws, body="## intro\n\nwhatever\n", status="sent")
     assert errors(vws) == []
+
+
+def test_an_update_number_has_no_leading_zeros_so_1_and_01_cannot_both_exist(vws):
+    garden(vws, number=1)
+    video_draft(vws, 2, "garden", "01", GARDEN_BOARD)
+    found = errors(vws)
+    second = f"records/drafts/{rid('DR', 2)}-update-01.md"
+    assert f"{second}: number '01' must be a positive whole number, without leading zeros" in found
+    assert f"{second}: number 01 of series 'garden' is already used by {rid('DR', 1)}" in found
+
+
+def test_the_series_of_a_draft_must_be_a_name_not_a_path(vws):
+    (vws.ops / "config" / "evil.toml").write_text('title = "x"\n')
+    garden(vws)
+    video_draft(vws, 2, "../evil", 4, GARDEN_BOARD)
+    found = errors(vws)
+    assert (
+        f"records/drafts/{rid('DR', 2)}-update-4.md: series '../evil' must be a name: lowercase letters, digits and '-'"
+        in found
+    )
+
+
+def test_on_screen_text_is_what_each_kind_marks_as_screen_text():
+    board = storyboard.parse(GARDEN_BOARD.replace('label = "beds in the trial"', 'label = "TODO beds"'))
+    count = board.scene("results-count").props
+    assert list(storyboard.screen_texts(count)) == ["24", "TODO beds"]  # value and label; not kind or sources
+    roadmap = board.scene("goal-roadmap").props
+    assert list(storyboard.screen_texts(roadmap)) == ["Where we are"]  # step ids are not drawn as text
+    media = {"kind": "media", "headline": "H", "items": [{"src": "private:a.png", "label": "Before", "start": 1}]}
+    assert list(storyboard.screen_texts(media)) == ["H", "Before"]
+    assert [p for p in storyboard.placeholders(board)] == [
+        storyboard.Problem("results-count", "placeholder", "'TODO' left in the scene")
+    ]

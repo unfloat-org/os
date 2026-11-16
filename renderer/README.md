@@ -27,7 +27,12 @@ bad field (`error: manifest.json: scenes[3].props.rows: Too big: ...`).
   `<build>/tmp` (the script sets `TMPDIR` before Remotion starts), so a build
   folder never leaves a copy of its media elsewhere. Nothing is fetched while
   rendering: Inter comes from `@fontsource/inter`, and the browser (Remotion's
-  headless shell) is downloaded once, by `npm run setup` or the first render.
+  headless shell) is downloaded once, by `npm run setup` (`uo video setup`). A
+  render without it is refused with one line naming `uo video setup`.
+- `--fit <texts.json>` measures the text of a storyboard (`fitInputSchema` in
+  `src/manifest.ts`) and prints one JSON line, `{"problems": [...]}`, each with
+  the scene id and field (`rows[2]`); `uo video check` runs it. Its bundle and
+  temp files go beside the input file.
 
 ## The manifest in brief
 
@@ -49,9 +54,12 @@ The contract (C3) is written in `docs/video.md`; the renderer's statement of it 
 
 Frame furniture on every scene: the series title and update number, the current
 chapter, a progress line (gaps mark chapter starts), and, when `captions` is
-true, a caption band at the bottom that nothing else draws into. Text never
-overflows: headlines and rows step down in size until they fit, they are not
-clipped. Transitions are short fades inside each scene's own length.
+true, a caption band at the bottom that nothing else draws into. Text steps
+down in size until it fits and is never clipped; text that does not fit at the
+smallest size (a media headline on one line, points and rows in two lines, ...)
+is refused, by `--fit` at check time and by the validator before a render, with
+the path of the field. The sizes live in `src/textfit.ts` (media: `src/mediabox.ts`),
+used both by the scenes that draw the text and by `src/fitcheck.ts` that refuses it. Transitions are short fades inside each scene's own length.
 
 ## Develop
 
@@ -76,7 +84,9 @@ and a held clip, long text that has to be fitted, media at the box aspects
    the scene union and to the exported types.
 2. `src/kinds/<Name>.tsx`: the component. It draws inside `useFrameInfo().box`
    (the area above the caption band; a media scene lays itself out with `mediabox.ts`), takes sizes from `layout.ts` and colours
-   from `theme.ts`, and fits text with `FitText` instead of clipping.
+   from `theme.ts`, and fits text with `FitText` instead of clipping. Put the text
+   sizes in `src/textfit.ts` and the kind's texts in `src/fitcheck.ts`, so text
+   that cannot fit is refused instead of overflowing.
 3. `src/Scene.tsx`: one `case` in `Layout` (TypeScript flags the missing one).
 4. `fixtures/manifest.mjs`: a scene that uses it; `tests/validate.test.mjs`: the
    rules it enforces. Then `npm run test:render` and look at its still.

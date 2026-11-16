@@ -14,13 +14,12 @@ from pathlib import Path
 
 from unfloat_os.channels.video import refs
 from unfloat_os.schema import ID_RE, WORD_RE
-from unfloat_os.workspace import Workspace
+from unfloat_os.workspace import DATA_CLASSES, Workspace
 
 FOLDER = Path("config") / "video"  # relative to the records repository
 CHAPTERS = ("title", "bottom-line", "goal", "done", "results", "limits", "next", "end")
 DEFAULT_REQUIRED = ("bottom-line", "results", "next")
 # The providers of contract C4, used when the voice package is not installed in this checkout.
-C4_PROVIDERS = ("silent", "say", "kokoro", "elevenlabs", "file")
 TOP_KEYS = {"title", "audience", "task", "people", "captions", "length", "chapters", "voice", "data", "roadmap"}
 
 
@@ -73,10 +72,8 @@ class Series:
 
 
 def providers() -> tuple[str, ...]:
-    try:
-        from unfloat_os.channels.video import voice
-    except ImportError:
-        return C4_PROVIDERS
+    from unfloat_os.channels.video import voice  # imported here: the voice package imports `channels`
+
     return tuple(voice.providers())
 
 
@@ -184,7 +181,7 @@ def parse(name: str, path: Path, source: str) -> Series:
     allow = _strings(where, "data.allow", data.get("allow"))
     for pattern in allow:
         root = pattern.partition(":")[0]
-        if root not in ("public", "private", "restricted") or not pattern.partition(":")[2]:
+        if root not in DATA_CLASSES or not pattern.partition(":")[2]:
             raise SeriesError(
                 f"{where}: 'data.allow' pattern '{pattern}' must start with public:, private: or restricted:"
             )

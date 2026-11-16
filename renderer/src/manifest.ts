@@ -74,7 +74,7 @@ export const mediaItem = z
   });
 
 const titleProps = z
-  .object({ title: text, subtitle: text.optional(), meta: text.optional() })
+  .object({ title: text, subtitle: text.optional(), meta: text })
   .strict();
 
 const statementProps = z
@@ -328,3 +328,25 @@ export const manifestSchema = z
 
 export type Manifest = z.infer<typeof manifestSchema>;
 export type Scene = Manifest["scenes"][number];
+
+/**
+ * The input of `bin/render.mjs --fit <file>` (for `uo video check`): the text of
+ * each scene, before anything is voiced or copied. `props` are the scene's
+ * storyboard properties as the manifest will carry them; media items need only
+ * their `label`. The engine has checked their shape; fitcheck.ts reads them.
+ */
+export const fitInputSchema = z
+  .object({
+    version: z.literal(1),
+    captions: z.boolean(),
+    scenes: z.array(
+      z.object({
+        id: slug,
+        kind: z.enum(KINDS),
+        props: z.record(z.string(), z.unknown()),
+      }),
+    ),
+  })
+  .strict();
+
+export type FitInput = z.infer<typeof fitInputSchema>;

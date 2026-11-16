@@ -27,13 +27,23 @@ const out = path.join(root, "out", "test-render");
 
 const run = (cmd, args) => {
   const r = spawnSync(cmd, args, { encoding: "utf8", cwd: root });
-  assert.equal(r.status, 0, `${cmd} ${args.join(" ")}\n${r.stdout}\n${r.stderr}`);
+  assert.equal(
+    r.status,
+    0,
+    `${cmd} ${args.join(" ")}\n${r.stdout}\n${r.stderr}`,
+  );
   return r.stdout;
 };
 const probe = (file) =>
   JSON.parse(
     run("ffprobe", [
-      "-v", "error", "-print_format", "json", "-show_streams", "-show_format", file,
+      "-v",
+      "error",
+      "-print_format",
+      "json",
+      "-show_streams",
+      "-show_format",
+      file,
     ]),
   );
 const pngSize = (file) => {
@@ -42,7 +52,9 @@ const pngSize = (file) => {
   return [b.readUInt32BE(16), b.readUInt32BE(20)];
 };
 const listings = () =>
-  [tmpdir(), "/tmp"].map((dir) => new Set(existsSync(dir) ? readdirSync(dir) : []));
+  [tmpdir(), "/tmp"].map(
+    (dir) => new Set(existsSync(dir) ? readdirSync(dir) : []),
+  );
 
 run("node", ["fixtures/make.mjs"]);
 rmSync(out, { recursive: true, force: true });
@@ -53,10 +65,15 @@ const before = listings();
 
 const started = Date.now();
 run("node", [
-  "bin/render.mjs", "--build", build,
-  "--out", path.join(out, "fixture.mp4"),
-  "--stills", path.join(out, "stills"),
-  "--poster", path.join(out, "poster.png"),
+  "bin/render.mjs",
+  "--build",
+  build,
+  "--out",
+  path.join(out, "fixture.mp4"),
+  "--stills",
+  path.join(out, "stills"),
+  "--poster",
+  path.join(out, "poster.png"),
 ]);
 const seconds = (Date.now() - started) / 1000;
 
@@ -76,7 +93,8 @@ assert.ok(
 // faststart: the moov atom comes before the media data
 const head = readFileSync(path.join(out, "fixture.mp4")).subarray(0, 64 * 1024);
 assert.ok(
-  head.indexOf("moov") !== -1 && head.indexOf("moov") < (head.indexOf("mdat") + 1 || Infinity),
+  head.indexOf("moov") !== -1 &&
+    head.indexOf("moov") < (head.indexOf("mdat") + 1 || Infinity),
   "moov is not at the start of the file",
 );
 
@@ -84,23 +102,35 @@ for (const scene of manifest.scenes) {
   const still = path.join(out, "stills", `${scene.id}.png`);
   assert.deepEqual(pngSize(still), [1920, 1080], still);
 }
-assert.equal(readdirSync(path.join(out, "stills")).length, manifest.scenes.length);
+assert.equal(
+  readdirSync(path.join(out, "stills")).length,
+  manifest.scenes.length,
+);
 assert.deepEqual(pngSize(path.join(out, "poster.png")), [1920, 1080]);
 
 // one scene at draft quality: half resolution, the scene's own length
 const target = manifest.scenes.find((s) => s.id === "end");
 const spans = sceneSpans(manifest.scenes, 30);
 run("node", [
-  "bin/render.mjs", "--build", build, "--quality", "draft",
-  "--scene", target.id, "--out", path.join(out, "scene.mp4"),
+  "bin/render.mjs",
+  "--build",
+  build,
+  "--quality",
+  "draft",
+  "--scene",
+  target.id,
+  "--out",
+  path.join(out, "scene.mp4"),
 ]);
 const one = probe(path.join(out, "scene.mp4"));
 const oneVideo = one.streams.find((s) => s.codec_type === "video");
 assert.deepEqual([oneVideo.width, oneVideo.height], [960, 540]);
 assert.ok(
   Math.abs(
-    Number(one.format.duration) - spans[manifest.scenes.indexOf(target)].frames / 30,
-  ) <= 1 / 30 + 0.01,
+    Number(one.format.duration) -
+      spans[manifest.scenes.indexOf(target)].frames / 30,
+  ) <=
+    1 / 30 + 0.01,
 );
 
 // --- the media box, measured on the pixels of stills ---------------------------
@@ -112,9 +142,17 @@ rmSync(measure, { recursive: true, force: true });
 mkdirSync(path.join(measure, "media"), { recursive: true });
 const solid = (rel, colour, w, h, clip) =>
   run("ffmpeg", [
-    "-hide_banner", "-loglevel", "error", "-y",
-    "-f", "lavfi", "-i", `color=c=${colour}:s=${w}x${h}:r=30:d=${clip ? 2 : 1}`,
-    ...(clip ? ["-an", "-c:v", "libx264", "-pix_fmt", "yuv420p"] : ["-frames:v", "1"]),
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    `color=c=${colour}:s=${w}x${h}:r=30:d=${clip ? 2 : 1}`,
+    ...(clip
+      ? ["-an", "-c:v", "libx264", "-pix_fmt", "yuv420p"]
+      : ["-frames:v", "1"]),
     path.join(measure, rel),
   ]);
 const MAGENTA = [(r, g, b) => r > 200 && g < 60 && b > 200, "0xFF00FF"];
@@ -123,7 +161,13 @@ const cases = [
   // [scene id, items as [type, width, height, [matcher, ffmpeg colour]]]
   ["one-image", [["image", 2400, 833, MAGENTA]]],
   ["one-clip", [["video", 1920, 666, GREEN]]],
-  ["two", [["image", 1200, 845, MAGENTA], ["video", 960, 676, GREEN]]],
+  [
+    "two",
+    [
+      ["image", 1200, 845, MAGENTA],
+      ["video", 960, 676, GREEN],
+    ],
+  ],
   ["fitted", [["image", 2400, 1350, MAGENTA]]],
 ];
 const measureScenes = cases.map(([id, items]) => ({
@@ -146,19 +190,39 @@ const measureScenes = cases.map(([id, items]) => ({
 }));
 cases.forEach(([id, items]) =>
   items.forEach(([type, w, h, [, colour]], i) =>
-    solid(`media/${id}-${i + 1}.${type === "image" ? "png" : "mp4"}`, colour, w, h, type === "video"),
+    solid(
+      `media/${id}-${i + 1}.${type === "image" ? "png" : "mp4"}`,
+      colour,
+      w,
+      h,
+      type === "video",
+    ),
   ),
 );
 writeFileSync(
   path.join(measure, "manifest.json"),
   JSON.stringify({
-    version: 1, draft: "measure", title: "Measure",
+    version: 1,
+    draft: "measure",
+    title: "Measure",
     series: { name: "measure", title: "Measure", number: 1 },
-    date: "2026-01-01", fps: 30, width: 1920, height: 1080, captions: false,
-    chapters: [{ id: "title", label: "Title" }], roadmap: [], scenes: measureScenes,
+    date: "2026-01-01",
+    fps: 30,
+    width: 1920,
+    height: 1080,
+    captions: false,
+    chapters: [{ id: "title", label: "Title" }],
+    roadmap: [],
+    scenes: measureScenes,
   }),
 );
-run("node", ["bin/render.mjs", "--build", measure, "--stills", path.join(out, "measure")]);
+run("node", [
+  "bin/render.mjs",
+  "--build",
+  measure,
+  "--stills",
+  path.join(out, "measure"),
+]);
 const measured = [];
 cases.forEach(([id, items]) => {
   const png = readPng(readFileSync(path.join(out, "measure", `${id}.png`)));
@@ -188,12 +252,19 @@ const refused = (id, mutate, pattern) => {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   symlinkSync(path.join(measure, "media"), path.join(dir, "media"));
-  const bad = JSON.parse(readFileSync(path.join(measure, "manifest.json"), "utf8"));
+  const bad = JSON.parse(
+    readFileSync(path.join(measure, "manifest.json"), "utf8"),
+  );
   mutate(bad.scenes[0].props);
   writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(bad));
-  const r = spawnSync("node", ["bin/render.mjs", "--build", dir, "--poster", path.join(out, "never.png")], {
-    encoding: "utf8", cwd: root,
-  });
+  const r = spawnSync(
+    "node",
+    ["bin/render.mjs", "--build", dir, "--poster", path.join(out, "never.png")],
+    {
+      encoding: "utf8",
+      cwd: root,
+    },
+  );
   assert.equal(r.status, 1, r.stderr);
   assert.match(r.stderr, pattern, r.stderr);
   assert.equal(r.stderr.trim().split("\n").length, 1, "one error line");
@@ -212,9 +283,91 @@ refused(
   /^error: manifest\.json: scenes\[0\]\.props\.caption: does not fit the line under the media at 24 px/,
 );
 
+// --- --fit: every text that does not fit, named by scene and field ----------------
+const fitDir = path.join(root, "out", "fit-check");
+rmSync(fitDir, { recursive: true, force: true });
+mkdirSync(fitDir, { recursive: true });
+const fitTexts = (scenes) => {
+  writeFileSync(
+    path.join(fitDir, "texts.json"),
+    JSON.stringify({ version: 1, captions: true, scenes }),
+  );
+  const r = spawnSync(
+    "node",
+    ["bin/render.mjs", "--fit", path.join(fitDir, "texts.json")],
+    {
+      encoding: "utf8",
+      cwd: root,
+      env: { ...process.env, TMPDIR: path.join(fitDir, "tmp") },
+    },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout.trim().split("\n").pop()).problems.map(
+    (p) => `${p.id} ${p.field}: ${p.message}`,
+  );
+};
+const asText = (scene) => ({
+  id: scene.id,
+  kind: scene.kind,
+  props: scene.props,
+});
+assert.deepEqual(
+  fitTexts(manifest.scenes.map(asText)),
+  [],
+  "the fixture's own text fits",
+);
+const longRow =
+  "a row that says far more than any list row on a slide should ever say "
+    .repeat(3)
+    .trim();
+assert.deepEqual(
+  fitTexts([
+    {
+      id: "asks",
+      kind: "list",
+      props: { headline: "Asks", style: "bullets", rows: ["Short", longRow] },
+    },
+    {
+      id: "pairs",
+      kind: "list",
+      props: {
+        headline: "Pairs",
+        style: "pairs",
+        rows: [{ left: "Short", right: longRow }],
+      },
+    },
+    {
+      id: "point",
+      kind: "statement",
+      props: { headline: "One thing", points: [longRow] },
+    },
+    {
+      id: "figure",
+      kind: "media",
+      props: { headline: wordy, items: [{ label: "Before" }] },
+    },
+  ]),
+  [
+    "asks rows[1]: does not fit 2 lines at 40 px: shorten it",
+    "pairs rows[0].right: does not fit 2 lines at 40 px: shorten it",
+    "point points[0]: does not fit 2 lines at 40 px: shorten it",
+    "figure headline: does not fit one line at 40 px: shorten it",
+  ],
+);
+rmSync(fitDir, { recursive: true, force: true });
+console.log(
+  "fit check: the fixture fits; long rows, cells, points and a long media headline are named",
+);
+
 const after = listings();
-const left = after.map((now, i) => [...now].filter((name) => !before[i].has(name)));
-assert.deepEqual(left, [[], []], `left behind in the temp folders: ${left.flat().join(", ")}`);
+const left = after.map((now, i) =>
+  [...now].filter((name) => !before[i].has(name)),
+);
+assert.deepEqual(
+  left,
+  [[], []],
+  `left behind in the temp folders: ${left.flat().join(", ")}`,
+);
 
 console.log(
   `render ok: ${manifest.scenes.length} scenes, ${info.format.duration} s, ${seconds.toFixed(0)} s to render; files in ${out}`,

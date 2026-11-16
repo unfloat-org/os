@@ -13,12 +13,13 @@ exact from the audio, parts of a sentence are timed by characters (D8).
 from __future__ import annotations
 
 import base64
+import urllib.parse
 import wave
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from unfloat_os import credentials, http
-from unfloat_os.channels.video.voice.model import VoiceError, VoiceSettings
+from unfloat_os.channels.video.voice.model import Keep, VoiceError, VoiceSettings
 
 DEFAULT_MODEL = "eleven_multilingual_v2"  # long-form narration; 10,000 characters per request
 DEFAULT_BASE_URL = "https://api.elevenlabs.io"
@@ -70,7 +71,8 @@ class ElevenLabs:
     def request(self, text: str, settings: VoiceSettings) -> tuple[str, dict]:
         """The URL and JSON body of one sentence: nothing but the spoken text, the model and the voice settings."""
         output_format, _ = self._format(settings.options)
-        url = f"{self._base_url(settings.options)}/v1/text-to-speech/{settings.voice}/with-timestamps"
+        voice = urllib.parse.quote(settings.voice, safe="")  # a voice id never changes the path or the query
+        url = f"{self._base_url(settings.options)}/v1/text-to-speech/{voice}/with-timestamps"
         voice_settings = dict(settings.options.get("voice_settings", {}))  # type: ignore[call-overload]
         voice_settings["speed"] = settings.speed
         body = {
@@ -80,7 +82,7 @@ class ElevenLabs:
         }
         return f"{url}?output_format={output_format}", body
 
-    def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path) -> list[Path]:
+    def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path, keep: Keep) -> list[Path]:
         key = self._key()
         _, rate = self._format(settings.options)
         paths = []
@@ -106,4 +108,5 @@ class ElevenLabs:
                 out.setframerate(rate)
                 out.writeframes(pcm)
             paths.append(path)
+            keep(index, path)
         return paths

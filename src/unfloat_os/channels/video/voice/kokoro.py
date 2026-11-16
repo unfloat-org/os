@@ -15,7 +15,7 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
-from unfloat_os.channels.video.voice.model import VoiceError, VoiceSettings
+from unfloat_os.channels.video.voice.model import Keep, VoiceError, VoiceSettings
 
 # One place for every pin; a change invalidates the cached sentences (see `fingerprint`).
 PYTHON = "3.12"
@@ -58,7 +58,8 @@ class Kokoro:
             "python", str(RUNNER), "--request", str(request), "--out", str(out),
         ]  # fmt: skip
 
-    def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path) -> list[Path]:
+    def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path, keep: Keep) -> list[Path]:
+        # one model process makes every file at once; the engine caches them when it returns
         voice = settings.voice or DEFAULT_VOICE
         request = work / "request.json"
         request.write_text(

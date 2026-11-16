@@ -76,20 +76,28 @@ def _validate(items: Mapping[str, str], settings: VoiceSettings) -> None:
 def _render_missing(
     missing: dict[str, str], provider: Provider, settings: VoiceSettings, cache: Path, wanted: dict[str, Path]
 ) -> None:
-    """One provider call for every sentence that is not cached; each result is normalized into the cache."""
+    """One provider call for every sentence that is not cached; each result is normalized into the cache as soon as
+    the provider hands it over, so a failure part way keeps what was already made (and, for a paid service, paid)."""
     provider.check(settings)
     cache.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(dir=cache, prefix=".work-"))
+    keys = list(missing)
+    kept: set[int] = set()
+
+    def keep(index: int, path: Path) -> None:
+        pcm = audio.trim(audio.load_standard(path, work))
+        if not pcm:
+            raise VoiceError(f"{provider.name} returned no audio for: {missing[keys[index]][:60]}")
+        audio.write_wav(wanted[keys[index]], pcm)
+        kept.add(index)
+
     try:
-        keys = list(missing)
-        rendered = provider.render([missing[key] for key in keys], settings, work)
+        rendered = provider.render([missing[key] for key in keys], settings, work, keep)
         if len(rendered) != len(keys):
             raise VoiceError(f"{provider.name} returned {len(rendered)} audio files for {len(keys)} sentences")
-        for key, path in zip(keys, rendered, strict=True):
-            pcm = audio.trim(audio.load_standard(path, work))
-            if not pcm:
-                raise VoiceError(f"{provider.name} returned no audio for: {missing[key][:60]}")
-            audio.write_wav(wanted[key], pcm)
+        for index, path in enumerate(rendered):
+            if index not in kept:
+                keep(index, path)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

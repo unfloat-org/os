@@ -10,11 +10,12 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 
+from unfloat_os.channels.video.voice.engine import PARAGRAPH_PAUSE_S as PARAGRAPH_PAUSE  # the voice's (C4)
+
 FPS = 30
 LEAD = 0.4  # silence before the narration starts (written into the scene's WAV)
 TAIL = 1.0  # silence after it, before the next scene
 SILENT_SECONDS = 4.0
-PARAGRAPH_PAUSE = 0.7  # the voice's pause between paragraphs (contract C4)
 
 
 def to_frames(seconds: float, fps: int = FPS) -> int:

@@ -8,7 +8,7 @@ import pytest
 from conftest import rid
 from fixtures.video.helpers import GARDEN, GARDEN_BOARD, garden, png, video_ws, write_series
 
-from unfloat_os import check
+from unfloat_os import check, cli
 from unfloat_os.channels.video import checks, refs, storyboard
 from unfloat_os.channels.video.series import SeriesError, load
 
@@ -85,9 +85,9 @@ def test_placeholders_warn_in_uo_check_and_block_uo_video_check(vws):
 SCAN = "restricted:garden/plots/plot-07/scan.png"
 
 
-def with_scan(ws) -> str:
+def with_scan(ws, body: str = GARDEN_BOARD) -> str:
     png(ws.data_dir("restricted") / "garden/plots/plot-07/scan.png", 50, 50)
-    return GARDEN_BOARD.replace(
+    return body.replace(
         "highlight = [[0.55, 0.10, 0.35, 0.80]] }]", f'highlight = [[0.55, 0.10, 0.35, 0.80]] }}, {{ src = "{SCAN}" }}]'
     )
 
@@ -194,3 +194,53 @@ def test_screen_text_is_every_string_a_viewer_sees():
         "Beds with mulch gave 41% more tomatoes"
     ]
     assert list(storyboard.screen_texts(board.scene("goal-roadmap").props)) == ["Where we are"]
+
+
+# every check applies whatever the draft's status (H1), and the record's own fields are checked too (M1) -------------
+
+
+def test_a_sent_draft_gets_every_storyboard_rule_in_uo_video_check(vws, monkeypatch, capsys):
+    outside = "private:other/secret.png"
+    png(vws.data_dir("private") / "other/secret.png")
+    body = GARDEN_BOARD.replace("private:updates/assets/garden/u3/harvest.png", outside)
+    body = body.replace('kind = "number"', 'kind = "bogus"')
+    garden(vws, body=body, status="sent")
+    report, _ = check.check_records(vws)
+    assert report.errors == []  # `uo check` leaves a sent draft alone
+    monkeypatch.setenv("UNFLOAT_WORKSPACE", str(vws.root))
+    assert cli.main(["video", "check", rid("DR", 1)]) == 1
+    err = capsys.readouterr().err
+    assert f"scene results-harvest: media: item 1: '{outside}' is outside the allow-list of series 'garden'" in err
+    assert "scene results-count: kind: unknown kind 'bogus'" in err
+
+
+def test_media_on_a_repository_root_is_one_error_line_not_a_traceback(vws, monkeypatch, capsys):
+    body = GARDEN_BOARD.replace("private:updates/assets/garden/u3/harvest.png", "research:results/harvest.png")
+    garden(vws, body=body, status="dropped")
+    monkeypatch.setenv("UNFLOAT_WORKSPACE", str(vws.root))
+    assert cli.main(["video", "build", rid("DR", 1)]) == 1
+    err = capsys.readouterr().err
+    assert "item 1: 'research:results/harvest.png' must be in a data folder" in err
+    assert err.strip().endswith("error(s); nothing built") and "Traceback" not in err
+
+
+def test_uo_video_check_refuses_what_uo_check_refuses_in_the_record_fields(vws):
+    path = garden(vws)
+    path.write_text(path.read_text().replace("created: 2026-11-17\n", ""))
+    plan = checks.prepare(vws, rid("DR", 1))
+    assert [i.message for i in plan.report.errors] == ["missing 'created'"]
+
+
+# number check edges (L1) -------------------------------------------------------------------------------------------
+
+
+def test_a_leading_decimal_point_and_odd_comma_groups_are_numerals():
+    assert checks.numerals("a .25 cm gap") == [(".25", "0.25")]
+    assert checks.numerals("3,1500 seeds") == [("1500", "1500")]
+    assert checks.numerals("1,500 seeds and 12,000 more") == [("1,500", "1500"), ("12,000", "12000")]
+    assert checks.numerals("in 2,3 and 4") == []
+
+
+def test_an_on_screen_value_with_a_leading_point_is_checked(vws):
+    found = video_errors(vws, GARDEN_BOARD.replace('value = "24"', 'value = ".93"'))
+    assert found == ["scene results-count: number: '.93' occurs in none of its sources; " + CITE]

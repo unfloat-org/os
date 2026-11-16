@@ -5,10 +5,8 @@ import type { TitleProps } from "../manifest.ts";
 import { color } from "../theme.ts";
 import { FitText, Reveal } from "./parts.tsx";
 
-export const Title: React.FC<{ props: TitleProps; meta: string }> = ({
-  props,
-  meta,
-}) => {
+// `meta` is always set: the engine writes the default line (series, number, date) when the storyboard has none.
+export const Title: React.FC<{ props: TitleProps }> = ({ props }) => {
   const { box } = useFrameInfo();
   const maxWidth = box.w - 160;
   return (
@@ -61,7 +59,7 @@ export const Title: React.FC<{ props: TitleProps; meta: string }> = ({
       ) : null}
       <Reveal delay={16}>
         <FitText
-          text={meta}
+          text={props.meta}
           sizes={[36]}
           maxWidth={maxWidth}
           maxLines={2}

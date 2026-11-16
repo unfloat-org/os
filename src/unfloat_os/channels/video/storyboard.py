@@ -17,7 +17,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 from unfloat_os import policy
-from unfloat_os.channels.video import refs
+from unfloat_os.channels.video import media, refs
 from unfloat_os.channels.video.series import CHAPTERS, Series
 from unfloat_os.records import slugify
 
@@ -43,8 +43,6 @@ FENCE = "```"
 MARKUP_LINE_RE = re.compile(r"^\s*(?:[-*+]\s|\d+[.)]\s|>|#|\|)")
 MARKUP_CHARS = set("*_`[]<>|#~{}")
 URL_RE = re.compile(r"https?://|www\.", re.I)
-# Properties that are not on-screen text: never checked for marks or numbers.
-NOT_SCREEN = {"kind", "sources", "numbers_ok", "seconds", "src", "style", "current", "done", "zoom", "highlight"}
 PLACEHOLDER = "TODO"
 
 
@@ -241,16 +239,23 @@ def _boxes(value: object) -> str | None:
 class Prop:
     check: Check
     required: bool = False
+    # On-screen text: checked for marks, numbers and placeholders. False for every value that is not drawn as
+    # text (a file reference, a style word, a step id, numbers); a new property is checked unless it says so.
+    screen: bool = True
+
+
+def _data(check: Check, required: bool = False) -> Prop:
+    return Prop(check, required, screen=False)
 
 
 ITEM = {
-    "src": Prop(_line, required=True),
+    "src": _data(_line, required=True),
     "label": Prop(_line),
-    "zoom": Prop(_box),
-    "highlight": Prop(_boxes),
-    "start": Prop(_non_negative),
-    "end": Prop(_positive),
-    "loop": Prop(_bool),
+    "zoom": _data(_box),
+    "highlight": _data(_boxes),
+    "start": _data(_non_negative),
+    "end": _data(_positive),
+    "loop": _data(_bool),
 }
 
 
@@ -283,10 +288,10 @@ def _table_problem(table: dict, spec: dict[str, Prop]) -> str | None:
 
 
 COMMON = {
-    "kind": Prop(_line, required=True),
-    "sources": Prop(_strings()),
-    "numbers_ok": Prop(_strings()),
-    "seconds": Prop(_positive),
+    "kind": _data(_line, required=True),
+    "sources": _data(_strings()),
+    "numbers_ok": _data(_strings()),
+    "seconds": _data(_positive),
 }
 # One entry per kind: its own properties besides COMMON. A new kind is an entry here and a component in the renderer.
 KINDS: dict[str, dict[str, Prop]] = {
@@ -301,16 +306,16 @@ KINDS: dict[str, dict[str, Prop]] = {
     },
     "list": {
         "headline": Prop(_headline, required=True),
-        "style": Prop(_choice("bullets", "numbered", "pairs"), required=True),
+        "style": _data(_choice("bullets", "numbered", "pairs"), required=True),
         "rows": Prop(lambda v: None, required=True),  # shape depends on the style: `_rows`
         "left_title": Prop(_line),
         "right_title": Prop(_line),
-        "asks": Prop(_bool),
+        "asks": _data(_bool),
     },
     "roadmap": {
         "headline": Prop(_headline),
-        "current": Prop(_line, required=True),
-        "done": Prop(_strings(), required=True),
+        "current": _data(_line, required=True),
+        "done": _data(_strings(), required=True),
     },
 }
 
@@ -349,18 +354,31 @@ def _roadmap(scene: Scene, series: Series) -> Iterator[str]:
         yield f"'current' '{current}' is also listed as done"
 
 
-def screen_texts(value: object, key: str = "") -> Iterator[str]:
-    """Every on-screen string of a scene's properties (headline, points, rows, labels, captions, ...)."""
-    if key in NOT_SCREEN:
-        return
+def _strings_in(value: object) -> Iterator[str]:
     if isinstance(value, str):
         yield value
     elif isinstance(value, list):
         for item in value:
-            yield from screen_texts(item)
+            yield from _strings_in(item)
     elif isinstance(value, dict):
-        for k, v in value.items():
-            yield from screen_texts(v, k)
+        for item in value.values():
+            yield from _strings_in(item)
+
+
+def screen_texts(props: dict) -> Iterator[str]:
+    """Every on-screen string of a scene's properties (headline, points, rows, labels, captions, ...), by the
+    `screen` flag of each property of its kind. Properties the kind does not know are left out (they are errors)."""
+    spec = {**COMMON, **KINDS.get(props.get("kind"), {})} if isinstance(props.get("kind"), str) else COMMON
+    for key, value in props.items():
+        prop = spec.get(key)
+        if prop is None or not prop.screen:
+            continue
+        if key == "items" and isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    yield from (t for k, v in item.items() if (p := ITEM.get(k)) and p.screen for t in _strings_in(v))
+            continue
+        yield from _strings_in(value)
 
 
 def narration_problems(text: str) -> Iterator[str]:
@@ -452,7 +470,7 @@ def _media_ref(n: int, src: str, series: Series | None) -> Iterator[tuple[str, s
         return
     if ref.data_class is None:
         yield "media", f"item {n}: '{src}' must be in a data folder (public:, private: or restricted:)"
-    elif ref.suffix not in (".png", ".jpg", ".jpeg", ".mp4"):
+    elif ref.suffix not in media.SUFFIXES:
         yield "media", f"item {n}: '{src}' must be a PNG, JPG or MP4 file"
     elif series is not None and not series.allows(ref):
         yield "media", f"item {n}: '{src}' is outside the allow-list of series '{series.name}' (data.allow)"

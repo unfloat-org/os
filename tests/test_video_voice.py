@@ -54,7 +54,7 @@ class CountingProvider:
     def check(self, settings: VoiceSettings) -> None:
         return None
 
-    def render(self, texts, settings, work):
+    def render(self, texts, settings, work, keep):
         self.calls.append(list(texts))
         paths = []
         for index, text in enumerate(texts):
@@ -567,3 +567,42 @@ def test_file_provider_needs_a_path_a_folder_for_several_scenes_and_an_existing_
         {"a": "Hi.", "b": "Yo."}, VoiceSettings("file", options={"path": str(folder)}), tmp_path / "o", tmp_path / "c"
     )
     assert [result["a"].seconds, result["b"].seconds] == [pytest.approx(1.0), pytest.approx(2.0)]
+
+
+class FailingOn(FakeTransport):
+    """Answers like the service, but fails on request number `n` (1-based)."""
+
+    def __init__(self, n: int):
+        super().__init__()
+        self.n = n
+
+    def __call__(self, method, url, **kwargs):
+        if len(self.requests) + 1 == self.n:
+            self.requests.append({"url": url, "data": kwargs.get("data")})
+            raise http.HttpError(method, url, 500, "server error")
+        return super().__call__(method, url, **kwargs)
+
+
+def test_elevenlabs_keeps_every_sentence_already_paid_for_when_a_request_fails(tmp_path, monkeypatch):
+    text = "The beds were dug. The seeds went in. The rain came. The first shoots are up."
+    settings = VoiceSettings("elevenlabs", "v", options={"output_format": "pcm_48000"})
+    cache = tmp_path / "cache"
+    failing = FailingOn(3)
+    eleven(monkeypatch, failing)
+    with pytest.raises(VoiceError, match="elevenlabs"):
+        synthesize({"s": text}, settings, tmp_path / "out", cache)
+    assert len(list(cache.glob("*.wav"))) == 2  # the two sentences answered before the failure
+    retry = FakeTransport()
+    eleven(monkeypatch, retry)
+    synthesize({"s": text}, settings, tmp_path / "out", cache)
+    assert [r["data"]["text"] for r in retry.requests] == ["The rain came.", "The first shoots are up."]
+
+
+def test_elevenlabs_quotes_the_voice_id_so_it_cannot_change_the_request(tmp_path, monkeypatch):
+    transport = FakeTransport()
+    eleven(monkeypatch, transport)
+    settings = VoiceSettings("elevenlabs", "a/b?x=1", options={"output_format": "pcm_48000"})
+    synthesize({"s": "One line."}, settings, tmp_path / "o", tmp_path / "c")
+    assert transport.requests[0]["url"] == (
+        "https://api.elevenlabs.io/v1/text-to-speech/a%2Fb%3Fx%3D1/with-timestamps?output_format=pcm_48000"
+    )

@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from unfloat_os.channels.video.voice import audio
-from unfloat_os.channels.video.voice.model import VoiceError, VoiceSettings
+from unfloat_os.channels.video.voice.model import Keep, VoiceError, VoiceSettings
 
 # `say` takes a rate in words per minute but renders it in steps that depend on the voice (measured on this
 # laptop: for Daniel every rate from 155 to 180 gives the same audio as no -r at all), so a small `speed`
@@ -48,7 +48,7 @@ class Say:
             if names and settings.voice.casefold() not in known:
                 raise VoiceError(f"say: no voice named {settings.voice!r}; list them with `say -v '?'`")
 
-    def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path) -> list[Path]:
+    def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path, keep: Keep) -> list[Path]:
         paths = []
         for index, text in enumerate(texts):
             source, path = work / f"{index}.txt", work / f"{index}.wav"
@@ -63,4 +63,5 @@ class Say:
                 detail = (result.stderr or result.stdout).strip() or "no output"
                 raise VoiceError(f"say failed for voice {settings.voice or 'default'!r}: {detail}")
             paths.append(path)
+            keep(index, path)
         return paths

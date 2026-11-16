@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 from conftest import rid
-from fixtures.video.helpers import BAKERY_CLIP, StubRenderer, ToneVoice, bakery, garden, video_ws
+from fixtures.video.helpers import BAKERY_CLIP, GARDEN_BOARD, StubRenderer, ToneVoice, bakery, garden, video_ws
 
 from unfloat_os import cli
-from unfloat_os.channels.video import build, checks, timing
+from unfloat_os.channels.video import build, checks, fit, timing
 
 RENDERER = build.renderer_dir()
 SKIP = os.environ.get("UO_SKIP_RENDER") == "1"
@@ -171,3 +171,25 @@ def _starts(scenes: list[dict]) -> list[float]:
         out.append(t)
         t = round(t + s["seconds"], 3)
     return out
+
+
+@needs_browser
+def test_uo_video_check_asks_the_renderer_which_text_does_not_fit(vws, capsys):
+    long_row = "Mulch for every bed in the garden next spring, and compost for the beds by the gate, " * 2
+    body = GARDEN_BOARD.replace(
+        'rows = ["Mulch for every bed next spring", "Two more volunteers on Saturdays"]',
+        f'rows = ["{long_row.strip()}", "Two more volunteers on Saturdays"]',
+    ).replace(
+        'headline = "Beds with mulch gave 41% more tomatoes"',
+        'headline = "Beds with mulch gave 41% more tomatoes than the twelve beds without mulch did this year"',
+    )
+    garden(vws, body=body)
+    assert cli.main(["video", "check", rid("DR", 1)]) == 1
+    out, err = capsys.readouterr()
+    assert fit.FALLBACK_WARNING not in out
+    assert "scene results-harvest: fit: 'headline' does not fit one line at 40 px: shorten it" in err
+    assert "scene next-asks: fit: 'rows[0]' does not fit 2 lines at 40 px: shorten it" in err
+    assert "2 error(s)" in err
+    assert not (vws.data_dir("private") / "updates" / "cache" / "fit" / rid("DR", 1)).exists()
+    garden(vws)
+    assert cli.main(["video", "check", rid("DR", 1)]) == 0  # the same storyboard with text that fits

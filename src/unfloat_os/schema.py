@@ -252,8 +252,15 @@ def _video_fields(meta: Meta, _: Index) -> str | None:
 
 def _number_positive(meta: Meta, _: Index) -> str | None:
     value = meta.get("number")
-    if value and not (isinstance(value, str) and value.isdigit() and int(value) > 0):
-        return f"number '{text(meta, 'number')}' must be a positive whole number"
+    if value and not (isinstance(value, str) and value.isdigit() and int(value) > 0 and not value.startswith("0")):
+        return f"number '{text(meta, 'number')}' must be a positive whole number, without leading zeros"
+    return None
+
+
+def _series_name(meta: Meta, _: Index) -> str | None:
+    value = meta.get("series")
+    if value and not (isinstance(value, str) and WORD_RE.match(value)):
+        return f"series '{text(meta, 'series')}' must be a name: lowercase letters, digits and '-'"
     return None
 
 
@@ -281,7 +288,8 @@ DRAFT = Kind(
         Rule(
             "`series` and `number` are required when `channel` is `video` and refused otherwise", "error", _video_fields
         ),
-        Rule("`number` is a positive whole number", "error", _number_positive),
+        Rule("`number` is a positive whole number without leading zeros", "error", _number_positive),
+        Rule("`series` is a name: lowercase letters, digits and `-`", "error", _series_name),
     ),
     body="The text, ready to copy. Only Daniil sets `approved` or `sent`.",
 )

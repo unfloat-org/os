@@ -1,72 +1,24 @@
 import React from "react";
 import { useFrameInfo } from "../context.tsx";
-import { countLines, steps } from "../layout.ts";
 import type { ListProps } from "../manifest.ts";
+import { LIST as L, listLayout } from "../textfit.ts";
 import { color, FONT_STACK } from "../theme.ts";
-import { FitText, Reveal, useFit } from "./parts.tsx";
-
-const ROW_SIZES = steps(60, 40, 4);
-const ROW_LINE = 1.22;
-const ROW_PAD = 22;
-
-const rowText = (row: ListProps["rows"][number]): string[] =>
-  typeof row === "string" ? [row] : [row.left, row.right];
+import { FitText, Reveal } from "./parts.tsx";
 
 export const ListScene: React.FC<{ props: ListProps }> = ({ props }) => {
   const { box } = useFrameInfo();
-  const pairs = props.style === "pairs";
-  const markerWidth = props.style === "numbered" ? 84 : 52;
-  const gap = pairs ? 56 : 0;
-  const colWidth = pairs ? (box.w - 160 - gap) / 2 : box.w - 160 - markerWidth;
   const rows = props.rows;
-
-  const headline = useFit({
-    text: props.headline,
-    sizes: steps(84, 52, 4),
-    maxWidth: box.w - 160,
-    maxLines: 2,
-    weight: 700,
-    lineHeight: 1.1,
-    oneLineMin: 64,
-  });
-  const titleRow = pairs && (props.left_title || props.right_title) ? 62 : 0;
-  const available = box.h - headline.height - 44 - titleRow;
-
-  // one size for all rows of a list, so the rows read as a set: the largest
-  // at which every row takes at most two lines and the rows fit the height
-  const rowSize = React.useMemo(() => {
-    const all = rows.flatMap(rowText);
-    const heightAt = (size: number): number =>
-      rows.reduce(
-        (sum, row) =>
-          sum +
-          Math.max(
-            ...rowText(row).map((text) =>
-              countLines(text, size, 500, colWidth * 0.97),
-            ),
-          ) *
-            size *
-            ROW_LINE +
-          ROW_PAD * 2,
-        0,
-      );
-    let size = ROW_SIZES[ROW_SIZES.length - 1];
-    for (const candidate of ROW_SIZES) {
-      const twoLines = all.every(
-        (text) => countLines(text, candidate, 500, colWidth * 0.97) <= 2,
-      );
-      if (twoLines && heightAt(candidate) <= available) {
-        size = candidate;
-        break;
-      }
-    }
-    return size;
-  }, [rows, colWidth, available]);
+  // sizes from textfit.ts, which fitcheck.ts also uses to refuse text that cannot fit
+  const layout = React.useMemo(() => listLayout(props, box), [props, box]);
+  const { pairs, markerWidth, colWidth, rowSize, headline } = layout;
+  const gap = layout.columnGap;
+  const ROW_LINE = L.rowLine;
+  const ROW_PAD = L.rowPad;
 
   const rowStyle: React.CSSProperties = {
     fontFamily: FONT_STACK,
     fontSize: rowSize,
-    fontWeight: 500,
+    fontWeight: L.rowWeight,
     lineHeight: ROW_LINE,
     color: color.text,
     overflowWrap: "anywhere",
@@ -84,17 +36,17 @@ export const ListScene: React.FC<{ props: ListProps }> = ({ props }) => {
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
-        gap: 44,
+        gap: L.gap,
       }}
     >
       <Reveal>
         <FitText
           text={props.headline}
           sizes={[headline.fontSize]}
-          maxWidth={box.w - 160}
-          maxLines={2}
-          weight={700}
-          lineHeight={1.1}
+          maxWidth={layout.width}
+          maxLines={L.headlineLines}
+          weight={L.headlineWeight}
+          lineHeight={L.headlineLine}
         />
       </Reveal>
       <div style={{ display: "flex", flexDirection: "column" }}>

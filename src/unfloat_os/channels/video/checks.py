@@ -23,7 +23,8 @@ from unfloat_os.workspace import Workspace
 
 DONE = ("sent", "dropped")
 # A numeral to check: two or more digits, a decimal point, or a percent sign (contract C1).
-NUMERAL_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+(?!\d)|\d+)(?:\.(\d+))?(\s?%|\s+percent\b)?", re.I)
+# A comma groups thousands only before exactly three digits ("3,1500" is 3 and 1500); ".25" is 0.25.
+NUMERAL_RE = re.compile(r"(?<![\d.])(?:(\d{1,3}(?:,\d{3})+(?!\d)|\d+)(?:\.(\d+))?|\.(\d+))(\s?%|\s+percent\b)?", re.I)
 
 
 def where(record: Record) -> str:
@@ -63,26 +64,39 @@ def load_all(ws: Workspace, records: Records, report: Report) -> dict[str, Serie
     return found
 
 
-def check_records(ws: Workspace, records: Records) -> Report:
-    report = Report()
-    known = load_all(ws, records, report)
-    numbers: dict[tuple[str, str], str] = {}
+def number_issues(records: Records, report: Report) -> None:
+    """An update number used twice in a series, among drafts not `dropped`; numbers compare as integers."""
+    numbers: dict[tuple[str, int], str] = {}
     for draft_id, record in sorted(records.drafts.items()):
         meta = record.meta
         if meta.get("channel") != "video":
             continue
         name, number, status = schema.text(meta, "series"), schema.text(meta, "number"), schema.text(meta, "status")
-        if status != "dropped" and name and number:
-            first = numbers.setdefault((name, number), draft_id)
+        if status != "dropped" and name and number.isdigit():
+            first = numbers.setdefault((name, int(number)), draft_id)
             if first != draft_id:
                 report.error(where(record), f"number {number} of series '{name}' is already used by {first}")
-        if status in DONE:
+
+
+def series_missing(ws: Workspace, name: str, known: dict[str, Series]) -> str | None:
+    if name and name not in known and not (ws.ops / FOLDER / f"{name}.toml").is_file():
+        return f"series '{name}' has no profile {series_where(name)}"
+    return None
+
+
+def check_records(ws: Workspace, records: Records) -> Report:
+    report = Report()
+    known = load_all(ws, records, report)
+    number_issues(records, report)
+    for _, record in sorted(records.drafts.items()):
+        meta = record.meta
+        if meta.get("channel") != "video" or schema.text(meta, "status") in DONE:
             continue
-        series = known.get(name)
-        if name and series is None and not (ws.ops / FOLDER / f"{name}.toml").is_file():
-            report.error(where(record), f"series '{name}' has no profile {series_where(name)}")
+        name = schema.text(meta, "series")
+        if message := series_missing(ws, name, known):
+            report.error(where(record), message)
         board = board_of(record)
-        for problem in storyboard.shape_problems(board, series):
+        for problem in storyboard.shape_problems(board, known.get(name)):
             report.error(where(record), str(problem))
         for problem in storyboard.placeholders(board):
             report.warning(where(record), str(problem))
@@ -158,7 +172,9 @@ def numerals(text: str) -> list[tuple[str, str]]:
     """(as written, normalized) for every numeral the number check applies to; `94 percent` normalizes to `94%`."""
     found = []
     for match in NUMERAL_RE.finditer(text):
-        whole, frac, percent = match.group(1).replace(",", ""), match.group(2), match.group(3)
+        lead = match.group(3)
+        whole = "0" if lead else match.group(1).replace(",", "")
+        frac, percent = lead or match.group(2), match.group(4)
         if len(whole + (frac or "")) < 2 and not frac and not percent:
             continue
         found.append((match.group(0).strip(), whole + (f".{frac}" if frac else "") + ("%" if percent else "")))
@@ -211,14 +227,19 @@ def prepare(ws: Workspace, draft_id: str, records: Records | None = None) -> Pla
         raise ChannelError(str(exc)) from exc
     report = Report()
     here = where(record)
-    for rule in schema.DRAFT.rules:
-        if message := rule.test(record.meta, records):
-            report.add(rule.level, here, message)
-    records_report = check_records(ws, records)
-    report.issues.extend(
-        i for i in records_report.issues if i.where in (here, series_where(name)) and i.level == "error"
-    )
+    # what `uo check` refuses in this record's fields and in its series profile, whatever the draft's status
+    from unfloat_os import check  # check imports this module
+
+    fields = check.validate(records, Store(ws.ops))
+    report.issues.extend(i for i in fields.issues if i.where == here and i.level == "error")
+    found = Report()
+    load_all(ws, records, found)
+    number_issues(records, found)
+    report.issues.extend(i for i in found.issues if i.where in (here, series_where(name)) and i.level == "error")
+    # the storyboard rules apply to every check and build, a sent or dropped draft included (`uo check` skips those)
     board = board_of(record)
+    for problem in storyboard.shape_problems(board, series):
+        report.error(here, str(problem))
     for problem in storyboard.placeholders(board):
         report.error(here, str(problem))
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -37,6 +37,9 @@ class Speech:
     segments: tuple[Segment, ...]
 
 
+Keep = Callable[[int, Path], None]
+
+
 class Provider(Protocol):
     """One speech engine. It turns sentences into audio files; the engine does the rest.
 
@@ -52,5 +55,8 @@ class Provider(Protocol):
     def check(self, settings: VoiceSettings) -> None:
         """Raise `VoiceError` naming the fix when the tool or the key is missing."""
 
-    def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path) -> list[Path]:
-        """One audio file (WAV, any rate, PCM) per text, in order, written under `work`."""
+    def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path, keep: Keep) -> list[Path]:
+        """One audio file (WAV, any rate, PCM) per text, in order, written under `work`.
+
+        A provider that makes the files one by one calls `keep(index, path)` as each is ready, so the engine caches
+        it at once and a failure later in the batch loses nothing already made."""

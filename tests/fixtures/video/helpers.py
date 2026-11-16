@@ -408,12 +408,14 @@ def bakery(ws: Workspace, draft: int = 1, number: int = 2) -> Path:
     for path in (image, clip):
         path.parent.mkdir(parents=True, exist_ok=True)
     bars = ",".join(
-        f"drawbox=x={300 + i * 650}:y={1250 - h}:w=420:h={h}:color={colour}:t=fill"
-        for i, (h, colour) in enumerate([(950, "0xFF8A4C"), (700, "0x6CC5F0"), (560, "0xFFB454")])
+        f"drawbox=x={150 + i * 325}:y={700 - h}:w=210:h={h}:color={colour}:t=fill"
+        for i, (h, colour) in enumerate([(560, "0xFF8A4C"), (410, "0x6CC5F0"), (330, "0xFFB454")])
     )
-    axis = "drawbox=x=150:y=1250:w=2100:h=6:color=0x8E8598:t=fill"
-    ffmpeg("-f", "lavfi", "-i", f"color=c=0x14101A:s=2400x1350,{bars},{axis}", "-frames:v", "1", str(image))
-    ffmpeg("-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=30:d=6", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+    axis = "drawbox=x=75:y=700:w=1050:h=4:color=0x8E8598:t=fill"
+    # the export sizes of a two-item scene (C7 media box): figure 1200x845, clip 960x676
+    ffmpeg("-f", "lavfi", "-i", f"color=c=0x14101A:s=1200x845,{bars},{axis}", "-frames:v", "1",
+           str(image))  # fmt: skip
+    ffmpeg("-f", "lavfi", "-i", "testsrc2=s=960x676:r=30:d=6", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
            str(clip))  # fmt: skip
     source = ws.members["research"].path / "results" / "starters.md"
     source.parent.mkdir(parents=True, exist_ok=True)

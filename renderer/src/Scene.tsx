@@ -7,7 +7,6 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { useFrameInfo } from "./context.tsx";
 import { CaptionBand } from "./Furniture.tsx";
 import { ListScene } from "./kinds/List.tsx";
 import { MediaScene } from "./kinds/Media.tsx";
@@ -19,18 +18,9 @@ import type { Scene as SceneData } from "./manifest.ts";
 
 /** Draws one scene by its kind. Add a kind here, in manifest.ts and in kinds/. */
 const Layout: React.FC<{ scene: SceneData }> = ({ scene }) => {
-  const { manifest } = useFrameInfo();
   switch (scene.kind) {
     case "title":
-      return (
-        <Title
-          props={scene.props}
-          meta={
-            scene.props.meta ??
-            `${manifest.series.title} · Update ${manifest.series.number} · ${manifest.date}`
-          }
-        />
-      );
+      return <Title props={scene.props} />;
     case "statement":
       return <Statement props={scene.props} />;
     case "media":

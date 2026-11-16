@@ -59,12 +59,18 @@ export const countLines = (
   return lines;
 };
 
-export type Fit = { fontSize: number; lines: number; height: number };
+/** `fits`: the text is within its lines and height at `fontSize`; false when even the smallest size is too big. */
+export type Fit = {
+  fontSize: number;
+  lines: number;
+  height: number;
+  fits: boolean;
+};
 
 /**
  * The largest of `sizes` (descending) at which `text` fits in `maxWidth` within
- * `maxLines` lines and `maxHeight`. When none fits, the smallest size is used:
- * text is never clipped.
+ * `maxLines` lines and `maxHeight`. When none fits, the smallest size is used
+ * (text is never clipped) and `fits` is false: fitcheck.ts refuses such text.
  */
 export const fitText = (opts: {
   text: string;
@@ -86,7 +92,7 @@ export const fitText = (opts: {
     });
     if (one.lines === 1 && one.fontSize >= opts.oneLineMin) return one;
   }
-  let fit: Fit = { fontSize: 0, lines: 0, height: 0 };
+  let fit: Fit = { fontSize: 0, lines: 0, height: 0, fits: false };
   for (const size of opts.sizes) {
     const lines = countLines(
       opts.text,
@@ -95,13 +101,12 @@ export const fitText = (opts: {
       // margin for the difference between measuring and the browser's layout
       opts.maxWidth * 0.97,
     );
-    fit = { fontSize: size, lines, height: lines * size * opts.lineHeight };
-    if (
+    const height = lines * size * opts.lineHeight;
+    const fits =
       lines <= opts.maxLines &&
-      (opts.maxHeight === undefined || fit.height <= opts.maxHeight)
-    ) {
-      return fit;
-    }
+      (opts.maxHeight === undefined || height <= opts.maxHeight);
+    fit = { fontSize: size, lines, height, fits };
+    if (fits) return fit;
   }
   return fit;
 };

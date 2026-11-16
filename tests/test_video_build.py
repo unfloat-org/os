@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 from conftest import rid
-from fixtures.video.helpers import WORD_SECONDS, FakeVoice, StubRenderer, garden, png, video_ws
+from fixtures.video.helpers import GARDEN_BOARD, WORD_SECONDS, FakeVoice, StubRenderer, garden, png, video_ws
 from test_video_check import SCAN, with_scan
 
 from unfloat_os import cli
 from unfloat_os.channels import ChannelError
-from unfloat_os.channels.video import build, checks, media, timing
+from unfloat_os.channels.video import build, checks, fit, media, timing
 
 
 @pytest.fixture
@@ -118,8 +118,39 @@ def test_the_transcript_has_narration_by_chapter_screen_text_figures_and_sources
     assert "## Results\n\n### results-harvest (" in text
     assert "- Beds with mulch gave 41% more tomatoes" in text
     assert "The twelve beds with mulch gave 41 percent more tomatoes than the twelve without." in text
-    assert "- media/results-harvest-1.png (image)" in text
-    assert "- `research:results/harvest.md`" in text
+    assert "Media:\n\n- results-harvest, item 1 (image)\n" in text
+    assert "- `research:results/harvest.md`" in text  # an open repository: the source travels with the video
+
+
+def test_the_transcript_travels_with_the_video_so_it_names_no_draft_record_or_media_file(vws):
+    body = GARDEN_BOARD.replace(
+        'sources = ["research:results/harvest.md"]\n```\n\nBeds',
+        'sources = ["research:results/harvest.md", "ops:config/video/garden.toml"]\n```\n\nBeds',
+    )
+    garden(vws, body=with_scan(vws, body))
+    _, result, _, _ = run_build(vws)
+    text = (result.out / "transcript.md").read_text()
+    assert rid("DR", 1) not in text and "ops:" not in text
+    assert "u3/harvest.png" not in text and "plot-07" not in text and "media/" not in text
+    assert "1 internal source(s) left out (listed in run_meta.json)." in text
+    meta = json.loads((result.out / "run_meta.json").read_text())
+    assert "ops:config/video/garden.toml" in meta["input_refs"] and meta["draft"] == rid("DR", 1)
+
+
+def test_a_build_whose_output_class_changed_says_where_the_earlier_one_still_is(vws, monkeypatch, capsys):
+    garden(vws)
+    monkeypatch.setenv("UNFLOAT_WORKSPACE", str(vws.root))
+    monkeypatch.setattr(build, "require_renderer", lambda renderer: None)
+    monkeypatch.setattr(build, "run_renderer", StubRenderer())
+    monkeypatch.setattr(fit, "default_measure", lambda ws, plan: lambda data: [])
+    assert cli.main(["video", "build", rid("DR", 1), "--provider", "silent"]) == 0
+    assert "note:" not in capsys.readouterr().out
+    garden(vws, body=with_scan(vws))
+    assert cli.main(["video", "build", rid("DR", 1), "--provider", "silent"]) == 0
+    earlier = vws.data_dir("private") / "updates" / rid("DR", 1)
+    out = capsys.readouterr().out
+    assert f"note: an earlier build of {rid('DR', 1)} in another output class is still in {earlier}" in out
+    assert (earlier / "video.mp4").exists()  # told, not deleted
 
 
 def test_run_meta_records_the_voice_the_inputs_and_the_commit(vws):
@@ -182,6 +213,7 @@ def test_a_second_build_with_the_real_voice_synthesizes_nothing(vws, monkeypatch
     monkeypatch.setenv("UNFLOAT_WORKSPACE", str(vws.root))
     monkeypatch.setattr(build, "require_renderer", lambda renderer: None)
     monkeypatch.setattr(build, "run_renderer", StubRenderer())
+    monkeypatch.setattr(fit, "default_measure", lambda ws, plan: lambda data: [])
     assert cli.main(["video", "build", rid("DR", 1), "--provider", "silent"]) == 0
     first = capsys.readouterr().out
     assert cli.main(["video", "build", rid("DR", 1), "--provider", "silent"]) == 0

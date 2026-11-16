@@ -24,7 +24,7 @@ Read `../ops/AGENTS.md` first when it exists: the project's records, policy and 
 | `policy.py`, `http.py`, `credentials.py`, `channels/` | Outbound policy and the Gmail and Discord adapters |
 | `provenance.py` | `run_meta.json` for analysis runs: commit, uncommitted changes, Python, package versions, input hashes |
 | `drafts.py` | The email draft file format, shared by `uo check` and `uo gmail` |
-| `channels/video/` | Update videos (`docs/video.md`): storyboard, series profiles, references and data classes, checks, timing, build folder and renderer call, `uo video`; `voice/` is the narration |
+| `channels/video/` | Update videos (`docs/video.md`): storyboard, series profiles, references and data classes, checks, whether text fits (asked of the renderer), timing, build folder and renderer call, `uo video`; `voice/` is the narration |
 | `renderer/` | The video renderer (Node, Remotion; its own `README.md`): reads a build folder's `manifest.json`, audio and media and draws the video, stills and poster. Knows nothing about records, series or data classes; run by `build.py` as a subprocess |
 | `integrity.py`, `ids.py` | Append-only log and decisions; ID collisions across machines, `uo push-check`, `uo renumber` |
 | `health.py`, `status.py` | Hooks enabled, remotes, unpushed commits, CONTEXT freshness; `uo status` |

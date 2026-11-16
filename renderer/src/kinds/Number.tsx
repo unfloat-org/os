@@ -1,13 +1,13 @@
 import React from "react";
 import { useFrameInfo } from "../context.tsx";
-import { steps } from "../layout.ts";
 import type { NumberProps } from "../manifest.ts";
+import { NUMBER as N } from "../textfit.ts";
 import { color } from "../theme.ts";
 import { FitText, Reveal } from "./parts.tsx";
 
 export const NumberScene: React.FC<{ props: NumberProps }> = ({ props }) => {
   const { box } = useFrameInfo();
-  const width = box.w - 160;
+  const width = box.w - 160; // as numberFit in textfit.ts
   return (
     <div
       style={{
@@ -26,11 +26,11 @@ export const NumberScene: React.FC<{ props: NumberProps }> = ({ props }) => {
         <Reveal>
           <FitText
             text={props.headline}
-            sizes={steps(72, 48, 4)}
+            sizes={N.headline.sizes}
             maxWidth={width}
-            maxLines={2}
-            weight={600}
-            lineHeight={1.15}
+            maxLines={N.headline.lines}
+            weight={N.headline.weight}
+            lineHeight={N.headline.line}
             color={color.muted}
           />
         </Reveal>
@@ -38,34 +38,37 @@ export const NumberScene: React.FC<{ props: NumberProps }> = ({ props }) => {
       <Reveal delay={props.headline ? 6 : 0}>
         <FitText
           text={props.value}
-          sizes={steps(360, 160, 20)}
+          sizes={N.value.sizes}
           maxWidth={width}
-          maxLines={1}
-          weight={700}
-          lineHeight={1}
+          maxLines={N.value.lines}
+          weight={N.value.weight}
+          lineHeight={N.value.line}
           color={color.accent}
-          style={{ letterSpacing: "-0.03em", fontVariantNumeric: "tabular-nums" }}
+          style={{
+            letterSpacing: "-0.03em",
+            fontVariantNumeric: "tabular-nums",
+          }}
         />
       </Reveal>
       <Reveal delay={12}>
         <FitText
           text={props.label}
-          sizes={steps(68, 44, 4)}
+          sizes={N.label.sizes}
           maxWidth={width}
-          maxLines={2}
-          weight={600}
-          lineHeight={1.18}
+          maxLines={N.label.lines}
+          weight={N.label.weight}
+          lineHeight={N.label.line}
         />
       </Reveal>
       {props.denominator ? (
         <Reveal delay={18}>
           <FitText
             text={props.denominator}
-            sizes={steps(48, 40, 4)}
+            sizes={N.denominator.sizes}
             maxWidth={width}
-            maxLines={2}
-            weight={400}
-            lineHeight={1.25}
+            maxLines={N.denominator.lines}
+            weight={N.denominator.weight}
+            lineHeight={N.denominator.line}
             color={color.muted}
           />
         </Reveal>

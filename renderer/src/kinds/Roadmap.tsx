@@ -1,7 +1,11 @@
 import React from "react";
 import { useFrameInfo } from "../context.tsx";
-import { steps } from "../layout.ts";
 import type { RoadmapProps } from "../manifest.ts";
+import {
+  ROADMAP as R,
+  roadmapHeadlineWidth,
+  roadmapListWidth,
+} from "../textfit.ts";
 import { color, FONT_STACK } from "../theme.ts";
 import { FitText, Reveal } from "./parts.tsx";
 
@@ -10,7 +14,7 @@ export const RoadmapScene: React.FC<{ props: RoadmapProps }> = ({ props }) => {
   const list = manifest.roadmap;
   const done = new Set(props.done);
   const hasHeadline = Boolean(props.headline);
-  const listWidth = hasHeadline ? 880 : 1100;
+  const listWidth = roadmapListWidth(hasHeadline);
   const rowHeight = Math.min(128, Math.floor((box.h - 32) / list.length));
   const fontSize = Math.min(64, Math.floor(rowHeight * 0.5));
   const node = Math.min(60, Math.floor(rowHeight * 0.46));
@@ -26,19 +30,19 @@ export const RoadmapScene: React.FC<{ props: RoadmapProps }> = ({ props }) => {
         display: "flex",
         alignItems: "center",
         justifyContent: hasHeadline ? "space-between" : "center",
-        gap: 64,
+        gap: R.gap,
       }}
     >
       {hasHeadline ? (
-        <Reveal style={{ width: box.w - listWidth - 64 - 160 }}>
+        <Reveal style={{ width: roadmapHeadlineWidth(box) }}>
           <FitText
             text={props.headline ?? ""}
-            sizes={steps(92, 52, 4)}
-            maxWidth={box.w - listWidth - 64 - 160}
-            maxLines={5}
+            sizes={R.headlineSizes}
+            maxWidth={roadmapHeadlineWidth(box)}
+            maxLines={R.headlineLines}
             maxHeight={box.h}
-            weight={700}
-            lineHeight={1.1}
+            weight={R.headlineWeight}
+            lineHeight={R.headlineLine}
           />
         </Reveal>
       ) : null}
@@ -84,7 +88,11 @@ export const RoadmapScene: React.FC<{ props: RoadmapProps }> = ({ props }) => {
                         ? color.muted
                         : color.bg,
                     border: `4px solid ${
-                      isCurrent ? color.accent : isDone ? color.muted : color.line
+                      isCurrent
+                        ? color.accent
+                        : isDone
+                          ? color.muted
+                          : color.line
                     }`,
                     color: color.bg,
                     fontFamily: FONT_STACK,
