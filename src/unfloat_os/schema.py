@@ -235,6 +235,28 @@ def _task(milestones: tuple[str, ...], owners: tuple[str, ...]) -> Kind:
     )
 
 
+VIDEO_FIELDS = ("series", "number")
+
+
+def _video_fields(meta: Meta, _: Index) -> str | None:
+    """`series` and `number` belong to video drafts: required there, refused on every other channel."""
+    is_video = meta.get("channel") == "video"
+    if is_video:
+        missing = [key for key in VIDEO_FIELDS if not meta.get(key)]
+        return f"channel 'video' needs {' and '.join(repr(k) for k in missing)}" if missing else None
+    present = [key for key in VIDEO_FIELDS if meta.get(key)]
+    if present:
+        return f"{' and '.join(repr(k) for k in present)} only for channel 'video'"
+    return None
+
+
+def _number_positive(meta: Meta, _: Index) -> str | None:
+    value = meta.get("number")
+    if value and not (isinstance(value, str) and value.isdigit() and int(value) > 0):
+        return f"number '{text(meta, 'number')}' must be a positive whole number"
+    return None
+
+
 # Nothing in a draft comes from the config, so the kind is a constant (the Gmail adapter needs it without one).
 DRAFT = Kind(
     name="draft",
@@ -252,6 +274,14 @@ DRAFT = Kind(
         Field("reply_to", "Sent email draft this one answers (optional)", "ref", refs=("DR",)),
         Field("reply_thread", "Gmail thread ID of a thread someone else started (optional; instead of `reply_to`)"),
         Field("attachments", "Files `uo gmail push` attaches, relative to the private data folder (optional)", "list"),
+        Field("series", "Video series: a profile `config/video/<series>.toml` (video drafts only)"),
+        Field("number", "Number of the update in its series, unique among drafts not dropped (video drafts only)"),
+    ),
+    rules=(
+        Rule(
+            "`series` and `number` are required when `channel` is `video` and refused otherwise", "error", _video_fields
+        ),
+        Rule("`number` is a positive whole number", "error", _number_positive),
     ),
     body="The text, ready to copy. Only Daniil sets `approved` or `sent`.",
 )

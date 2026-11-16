@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Mapping
 
-from unfloat_os import schema, studies
+from unfloat_os import frontmatter, schema, studies
 from unfloat_os.records import Record, Records, Store, to_date
 from unfloat_os.workspace import Workspace
 
@@ -34,7 +35,43 @@ def _owner_name(records: Records, record: Record) -> str:
     return person.title if person else owner
 
 
-def render_records(records: Records, today: dt.date, analyses: list[studies.Study] = ()) -> str:
+def video_sections(records: Records, series_titles: Mapping[str, str]) -> list[str]:
+    """One section per video series: its updates in number order, with the bottom line and the asks."""
+    from unfloat_os.channels.video import storyboard
+
+    drafts = [d for d in records.drafts.values() if d.meta.get("channel") == "video"]
+    names = sorted(set(series_titles) | {schema.text(d.meta, "series") for d in drafts} - {""})
+    out = []
+    for name in names:
+        rows = []
+        mine = [d for d in drafts if schema.text(d.meta, "series") == name]
+        for d in sorted(mine, key=lambda d: (schema.text(d.meta, "number").zfill(6), d.id)):
+            board = storyboard.parse(frontmatter.body(d.path.read_text(encoding="utf-8")))
+            rows.append(
+                [
+                    schema.text(d.meta, "number"),
+                    link(d),
+                    schema.text(d.meta, "status"),
+                    schema.text(d.meta, "created"),
+                    board.bottom_line(),
+                    "; ".join(board.asks()),
+                ]
+            )
+        out += [
+            f"## Video: {cell(series_titles.get(name, name))}",
+            "",
+            *table(["Update", "Draft", "Status", "Created", "Bottom line", "Asks"], rows),
+        ]
+    return out
+
+
+def render_records(
+    records: Records,
+    today: dt.date,
+    analyses: list[studies.Study] = (),
+    video_series: Mapping[str, str] | None = None,
+) -> str:
+    """The tracker; `video_series` maps each video series to its title (from `config/video/`)."""
     text = schema.text
     tasks = sorted(records.tasks.values(), key=lambda t: (text(t.meta, "due") or "9999-99-99", t.id))
     open_tasks = [t for t in tasks if t.meta.get("status") in schema.OPEN_STATUS]
@@ -103,6 +140,8 @@ def render_records(records: Records, today: dt.date, analyses: list[studies.Stud
             ],
         ),
     ]
+
+    out += video_sections(records, video_series or {})
 
     order = {status: index for index, status in enumerate(schema.PERSON_STATUS)}
     people = sorted(records.people.values(), key=lambda p: (order.get(text(p.meta, "status"), 99), p.id))
@@ -176,4 +215,16 @@ def render_records(records: Records, today: dt.date, analyses: list[studies.Stud
 def render(ws: Workspace, today: dt.date) -> str:
     records = Store(ws.ops).load()
     analyses = [study for repo in ws.repos() for study in studies.load(repo)[0]]
-    return render_records(records, today, analyses)
+    return render_records(records, today, analyses, video_titles(ws))
+
+
+def video_titles(ws: Workspace) -> dict[str, str]:
+    from unfloat_os.channels.video import series
+
+    titles = {}
+    for name in series.names(ws):
+        try:
+            titles[name] = series.load(ws, name).title
+        except series.SeriesError:
+            titles[name] = name
+    return titles

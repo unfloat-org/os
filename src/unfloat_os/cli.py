@@ -13,6 +13,7 @@
   uo setup                            clone missing repositories, enable hooks, sync environments
   uo gmail ...                        Gmail drafts and replies (uo gmail -h)
   uo discord ...                      Discord server setup and reading (uo discord -h)
+  uo video ...                        narrated update videos from storyboard drafts (uo video -h)
 
 Run inside the workspace, or set UNFLOAT_WORKSPACE.
 """
@@ -223,7 +224,7 @@ def cmd_setup(args, ws: Workspace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     from unfloat_os import ids, migrate, status
-    from unfloat_os.channels import discord, gmail
+    from unfloat_os.channels import discord, gmail, video
 
     parser = argparse.ArgumentParser(
         prog="uo", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -276,6 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     gmail.register(sub)
     discord.register(sub)
+    video.register(sub)
     migrate.register(sub)
     status.register(sub)
     ids.register(sub)

@@ -12,6 +12,8 @@ EN_DASH = "\u2013"
 COMMON = ("[CONFIRM", "[INFERENCE", EM_DASH)
 CHANNEL_EXTRA = {
     "discord": (EN_DASH, "@everyone", "@here"),
+    # Narration is spoken and captioned: a dash of either kind reads as machine-written there too.
+    "video": (EN_DASH,),
 }
 
 

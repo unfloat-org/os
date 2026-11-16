@@ -6,6 +6,7 @@ import re
 from collections.abc import Mapping
 
 from unfloat_os import drafts, gitfiles, guard, health, integrity, links, schema, studies
+from unfloat_os.channels.video import checks as video_checks
 from unfloat_os.records import Records, Store, to_date
 from unfloat_os.report import Report
 from unfloat_os.workspace import RepoConfig, Workspace
@@ -76,13 +77,15 @@ def summary(records: Records) -> str:
 
 
 def check_records(ws: Workspace) -> tuple[Report, str]:
-    """Every rule over the records repository's content: schema, email drafts, append-only, CONTEXT freshness."""
+    """Every rule over the records repository's content: schema, email and video drafts, series profiles, append-only,
+    CONTEXT freshness."""
     store = Store(ws.ops)
     records = store.load()
     report = Report()
     report.extend(records.report)
     report.extend(validate(records, store))
     report.extend(drafts.check_email_drafts(records))
+    report.extend(video_checks.check_records(ws, records))
     report.extend(integrity.check_append_only(ws.ops))
     report.extend(health.check_context_fresh(ws, records))
     return report, summary(records)

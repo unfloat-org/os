@@ -15,8 +15,12 @@ Standard library only; Python 3.12 or newer.
 | Schema changes | `uo migrate` | Renaming or adding a field, or renaming a vocabulary value, is applied to every record at once (dry run first). |
 | Several machines | `uo push-check` (pre-push), `uo renumber` | A new ID that another clone already pushed is caught before push and renumbered with every reference. |
 | Data guard | `uo guard` (pre-commit) | Data, images, files over 2 MB and device file names stay out of git. |
-| Channels | `uo gmail`, `uo discord` | Drafts go into Gmail for a person to send; the Discord server is configured from a spec. Outbound text passes one policy check. |
+| Channels | `uo gmail`, `uo discord`, `uo video` | Drafts go into Gmail for a person to send; the Discord server is configured from a spec; update videos are built from storyboard drafts. Outbound text passes one policy check. |
 | Provenance | `unfloat_os.provenance` (library) | Every analysis run writes `run_meta.json` with the commit, uncommitted changes, Python and package versions and input hashes. |
+
+## Update videos
+
+A progress update can be a short narrated video built from a draft record: the draft holds the storyboard (scenes with a chapter, a layout, narration and media), a series profile in the records repository says who the updates are for and which media they may use, and `uo video build` writes the video, captions, transcript, stills and `run_meta.json` into the data folder. Every number on screen or spoken must occur in a cited source, and a video showing restricted media is written to the restricted folder. See [docs/video.md](docs/video.md).
 
 ## Workspace
 
