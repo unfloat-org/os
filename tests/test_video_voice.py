@@ -26,6 +26,7 @@ from unfloat_os.channels.video.voice import (
 from unfloat_os.channels.video.voice import text as textlib
 from unfloat_os.channels.video.voice.elevenlabs import ElevenLabs
 from unfloat_os.channels.video.voice.kokoro import Kokoro, lang_code
+from unfloat_os.channels.video.voice.say import parse_voices
 
 NARRATION = (
     "The tomato beds with mulch gave more fruit. We counted 41 percent more, e.g. 3.6 kilograms a bed.\n\n"
@@ -310,6 +311,21 @@ def test_say_without_the_command_names_the_alternatives(tmp_path, monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: None)
     with pytest.raises(VoiceError, match=r"`say` command is not available.*kokoro"):
         synthesize({"a": "Hello."}, VoiceSettings("say"), tmp_path / "o", tmp_path / "c")
+
+
+def test_say_voice_names_are_read_from_its_listing_with_spaces_and_brackets():
+    listing = (
+        "Daniel              en_GB    # Hello! My name is Daniel.\n"
+        "Eddy (English (UK)) en_GB    # Hello! My name is Eddy.\n"
+        "Bad News            en_US    # Hello! My name is Bad News.\n"
+    )
+    assert parse_voices(listing) == ["Daniel", "Eddy (English (UK))", "Bad News"]
+
+
+@pytest.mark.skipif(shutil.which("say") is None, reason="needs macOS say")
+def test_an_unknown_say_voice_is_refused_not_replaced_by_the_default(tmp_path):
+    with pytest.raises(VoiceError, match="no voice named 'NoSuchVoice'; list them with `say -v '\\?'`"):
+        synthesize({"a": "Hello."}, VoiceSettings("say", "NoSuchVoice"), tmp_path / "o", tmp_path / "c")
 
 
 def test_kokoro_without_uvx_names_the_install_command(tmp_path, monkeypatch):

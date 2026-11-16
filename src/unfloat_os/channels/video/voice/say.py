@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from collections.abc import Sequence
@@ -20,6 +21,16 @@ HINT = (
 )
 
 
+def parse_voices(listing: str) -> list[str]:
+    """Voice names from `say -v '?'` (a name may hold spaces and brackets: "Eddy (English (UK))")."""
+    names = []
+    for line in listing.splitlines():
+        match = re.match(r"^(.+?)\s+[a-z]{2,3}_[A-Za-z0-9]+\s+#", line)
+        if match:
+            names.append(match.group(1).strip())
+    return names
+
+
 class Say:
     name = "say"
 
@@ -29,6 +40,11 @@ class Say:
     def check(self, settings: VoiceSettings) -> None:
         if shutil.which("say") is None:
             raise VoiceError(f"say: the `say` command is not available: {HINT}")
+        if settings.voice:  # `say` falls back to its default voice for an unknown name, silently
+            listing = subprocess.run(["say", "-v", "?"], capture_output=True, text=True).stdout
+            names = parse_voices(listing)
+            if names and settings.voice.casefold() not in {name.casefold() for name in names}:
+                raise VoiceError(f"say: no voice named {settings.voice!r}; list them with `say -v '?'`")
 
     def render(self, texts: Sequence[str], settings: VoiceSettings, work: Path) -> list[Path]:
         paths = []
@@ -43,7 +59,6 @@ class Say:
             result = subprocess.run([*command, "-f", str(source)], capture_output=True, text=True)
             if result.returncode != 0 or not path.exists():
                 detail = (result.stderr or result.stdout).strip() or "no output"
-                hint = " (list voices with `say -v '?'`)" if settings.voice else ""
-                raise VoiceError(f"say failed for voice {settings.voice or 'default'!r}: {detail}{hint}")
+                raise VoiceError(f"say failed for voice {settings.voice or 'default'!r}: {detail}")
             paths.append(path)
         return paths
