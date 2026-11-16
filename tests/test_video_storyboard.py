@@ -84,6 +84,13 @@ def test_the_scene_id_is_the_slug_of_the_heading_and_notes_are_never_read():
             "scene results-harvest: property: 'items' item 1: 'highlight' box 1: must be a box [x, y, w, h] inside",
         ),
         (
+            "highlight = [[0.55, 0.10, 0.35, 0.80]]",
+            "highlight = [" + ", ".join(["[0.1, 0.1, 0.1, 0.1]"] * 9) + "]",
+            "scene results-harvest: property: 'items' item 1: 'highlight' has 9 boxes; at most 8",
+        ),
+        ('current = "harvest"\n', "", "scene goal-roadmap: property: kind 'roadmap' needs 'current'"),
+        ('done = ["plant"]\n', "", "scene goal-roadmap: property: kind 'roadmap' needs 'done'"),
+        (
             'current = "harvest"',
             'current = "compost"',
             "scene goal-roadmap: roadmap: 'current' 'compost' is not a roadmap step of the series",

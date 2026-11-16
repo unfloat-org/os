@@ -116,6 +116,19 @@ class MediaUse:
         return None
 
 
+CLIP_SLACK = 0.05  # seconds an `end` may pass the probed length (container rounding); the renderer allows the same
+
+
+def clip_problems(item: dict, length: float) -> list[str]:
+    """`start` and `end` of a clip must lie inside its probed length."""
+    start, end = item.get("start", 0), item.get("end")
+    if isinstance(start, int | float) and start >= length:
+        return [f"'start' {start} s is not before the end of the clip ({length:.2f} s)"]
+    if isinstance(end, int | float) and end > length + CLIP_SLACK:
+        return [f"'end' {end} s is past the end of the clip ({length:.2f} s)"]
+    return []
+
+
 @dataclass(frozen=True)
 class Plan:
     """A checked draft: what `uo video build` works from."""
@@ -255,6 +268,9 @@ def prepare(ws: Workspace, draft_id: str, records: Records | None = None) -> Pla
                     report.error(here, str(Problem(scene.id, "media", f"item {n}: {exc}")))
             else:
                 clips_unknown = True
+            if info is not None and info.seconds is not None:
+                for problem in clip_problems(item, info.seconds):
+                    report.error(here, str(Problem(scene.id, "media", f"item {n}: {problem}")))
             use = MediaUse(scene.id, n, ref, path, info, item)
             uses.append(use)
             if ref.data_class == "restricted" and series.released(ref) is None:

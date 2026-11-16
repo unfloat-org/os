@@ -22,11 +22,11 @@ Engine modules: `storyboard.py` (parse, kinds and shape rules), `series.py` (pro
 | --- | --- |
 | `uo video new SERIES "title"` | A draft with the next number of the series, its task and people, the chapter skeleton (title, the roadmap, a placeholder per required chapter) and the asks of the previous update in `## notes` |
 | `uo video check DR-###` | Every check, including those that read files; prints the length estimate and the output class |
-| `uo video build DR-### [--quality draft\|final] [--scene ID] [--provider NAME] [--voice NAME]` | Runs the check, voices every scene in one call, writes the build folder, renders; `--scene` renders one scene to `scene-<id>.mp4` for a quick look |
+| `uo video build DR-### [--quality draft\|final] [--scene ID] [--provider NAME] [--voice NAME]` | Runs the check, voices every scene in one call, writes the build folder, renders; `--scene` renders one scene to `scene-<id>.mp4` (with `scene-<id>.run_meta.json`) for a quick look, `--quality draft` at half size |
 | `uo video list` | Every series with its updates |
-| `uo video setup` | `npm ci` in the renderer |
+| `uo video setup` | `npm ci` and then `npm run setup` in the renderer: its packages, then its headless browser, so no render downloads anything |
 
-The renderer is found at `renderer/` next to the source tree of `uo`, or at `$UNFLOAT_RENDERER`. Without it, or without its `node_modules`, a build stops with an error naming `uo video setup`.
+The renderer is found at `renderer/` next to the source tree of `uo`, or at `$UNFLOAT_RENDERER`. Without it, or without its `node_modules`, a build stops with an error naming `uo video setup`. It needs Node 22.18 or newer and ffmpeg.
 
 ## The storyboard
 
@@ -45,12 +45,12 @@ Properties of every kind: `kind`; `sources` (references, for the number check); 
 | --- | --- |
 | `title` | `title`, `subtitle` (optional), `meta` (optional; default: series title, update number and the draft's `created` date) |
 | `statement` | `headline` (at most 120 characters), `points` (optional, at most 3) |
-| `media` | `headline`, `items` (1 or 2 tables: `src` a PNG, JPG or MP4 reference, `label`, `zoom` `[x, y, w, h]` as fractions, `highlight` a list of such boxes, `start` and `end` in seconds for a clip, `loop` default true), `caption` |
+| `media` | `headline`, `items` (1 or 2 tables: `src` a PNG, JPG or MP4 reference, `label`, `zoom` `[x, y, w, h]` as fractions, `highlight` a list of such boxes, `start` and `end` in seconds for a clip, inside the clip's length, `loop` default true; at most 8 highlight boxes), `caption` |
 | `number` | `value` (a string such as `"94%"`), `label`, `denominator`, `headline` (all but the first two optional) |
 | `list` | `headline`, `style` (`bullets`, `numbered` or `pairs`), `rows` (at most 4: strings, or tables `left`, `right` for pairs), `left_title`, `right_title` (pairs only), `asks` (true marks the update's asks) |
-| `roadmap` | `headline`, `current` (a step id), `done` (step ids); the steps come from the series |
+| `roadmap` | `headline` (optional), `current` (a step id), `done` (step ids, may be empty); the steps come from the series |
 
-Rules (checked). `uo check` runs those that need only the text and the series on every video draft not `sent` or `dropped`: chapters known and in order, required chapters present, kinds and properties, headline and list limits, roadmap steps of the series, media inside the series allow-list, no markup or URLs in narration, and the channel's forbidden marks (`policy.problems(text, "video")`) in narration and every on-screen string. Placeholders left by `uo video new` are warnings there. `uo video check` adds what needs files: sources exist, the number check, media exist, placeholders (now errors), and the length estimate against the series bounds. `uo video build` refuses a draft with any error. Every error is one line naming the file, the scene and the rule:
+Rules (checked). `uo check` runs those that need only the text and the series on every video draft not `sent` or `dropped`: chapters known and in order, required chapters present, kinds and properties, headline and list limits, roadmap steps of the series, media inside the series allow-list, no markup or URLs in narration, and the channel's forbidden marks (`policy.problems(text, "video")`) in narration and every on-screen string. Placeholders left by `uo video new` are warnings there. `uo video check` adds what needs files: sources exist, the number check, media exist, a clip's `start` and `end` lie inside it, placeholders (now errors), and the length estimate against the series bounds. `uo video build` refuses a draft with any error. Every error is one line naming the file, the scene and the rule:
 
 ```
 error: records/drafts/DR-###-update-3.md: scene results-harvest: number: '43 percent' occurs in none of its sources; cite one or list it in numbers_ok
@@ -199,7 +199,7 @@ No engine change is needed.
 ### Adding a kind
 
 1. Add an entry to `KINDS` in `storyboard.py`: its properties, which are required, and a check for each value. On-screen strings are found by walking the properties, so the marks and the number check apply to the new kind at once. Add a test of its rules.
-2. Add a component for it in the renderer and to the renderer's manifest validation.
+2. Add a component for it in the renderer and to the renderer's manifest validation (`renderer/README.md`, "Add a kind"). Use it in the bakery storyboard of `tests/fixtures/video/helpers.py`, so `tests/test_video_render.py` proves that the renderer accepts what the engine writes for it and draws it.
 3. Document it in the table above.
 
 ## References and data classes
@@ -225,3 +225,67 @@ The output class is `restricted` when any media is restricted and not named in t
 The voice cache is `private:updates/cache/voice/`; a second build with unchanged narration synthesizes nothing.
 
 Timing: a narrated scene lasts a lead of 0.4 seconds, its speech, and a tail of 1 second; `seconds` and the length of its clips are floors. The lead is written into the scene's WAV, so the renderer plays the audio from the first frame of the scene and caption times (seconds from the start of the scene) include it. Scene lengths are written on whole frames.
+
+## The build folder and the renderer (contract C3)
+
+The engine writes a build folder and the renderer reads nothing else:
+
+```
+build/manifest.json
+build/audio/<scene id>.wav           48 kHz mono 16-bit PCM, starting with the 0.4 s lead
+build/media/<scene id>-<n>.<ext>     copies under scene-based names
+```
+
+`manifest.json`, as the engine writes it (the bakery fixture, one scene shown):
+
+```json
+{
+  "version": 1, "draft": "DR-###", "title": "Update 2",
+  "series": { "name": "bakery", "title": "Sourdough starter trial", "number": 2 },
+  "date": "2026-11-17", "fps": 30, "width": 1920, "height": 1080, "captions": true,
+  "chapters": [ { "id": "title", "label": "Title" }, { "id": "results", "label": "Results" } ],
+  "roadmap": [ { "id": "mix", "label": "Mixing" }, { "id": "bake", "label": "Test bakes" } ],
+  "scenes": [
+    {
+      "id": "results-rise", "chapter": "results", "kind": "media",
+      "props": {
+        "headline": "Rye rose 35% higher than wheat",
+        "caption": "Rise measured after four hours",
+        "items": [
+          { "src": "media/results-rise-1.png", "label": "Rise by starter", "highlight": [[0.08, 0.15, 0.26, 0.75]],
+            "type": "image", "width": 2400, "height": 1350 },
+          { "src": "media/results-rise-2.mp4", "label": "Oven camera", "loop": false,
+            "type": "video", "width": 1920, "height": 1080, "seconds": 6.0 }
+        ]
+      },
+      "audio": { "src": "audio/results-rise.wav", "seconds": 7.45 },
+      "captions": [ { "text": "On the left, the rise of each starter.", "start": 0.4, "end": 2.4 } ],
+      "seconds": 8.433
+    }
+  ]
+}
+```
+
+- `props` are the scene's storyboard properties minus `kind`, `sources`, `numbers_ok` and `seconds`, as written (no defaults filled in: `loop` is absent unless written), with each media `src` rewritten into the build folder and each item given `type`, `width`, `height` and, for a clip, `seconds` (its whole probed length). The title scene always carries `meta` (the default is generated). `denominator` and `value` are strings.
+- `chapters` lists the chapters present, in order, with their labels; `roadmap` is the series' steps. `audio` is null for a scene without narration. `captions` are always written, also when the series sets `captions = false` (then the top-level flag tells the renderer not to draw them); their times are seconds from the start of the scene and include the lead. Every `seconds` is on whole frames, so the video is exactly the sum of its scenes.
+- The renderer validates the manifest strictly (`renderer/src/manifest.ts`): an unknown property in `props` or in a media item, a missing file, audio or a caption past the end of its scene are refused with the path of the field. The engine's checks are at least as strict, so a draft that passes `uo video check` always renders: `tests/test_video_render.py` runs the renderer's own validation on the manifests the engine writes.
+
+The command, run by `build.py` in the renderer folder with `TMPDIR`, `TMP` and `TEMP` set to `build/tmp` and any Remotion licence variable removed (no licence key is ever passed, so a render sends no telemetry):
+
+```
+node bin/render.mjs --build <build> --out <out>/video.mp4 --quality final --stills <out>/stills --poster <out>/poster.png
+node bin/render.mjs --build <build> --out <out>/scene-<id>.mp4 --quality draft|final --scene <id>
+```
+
+A full build is one call, so the renderer bundles and starts its browser once. The bundle goes to `build/bundle`; its public folder is `build/tmp/public`, links to `build/audio` and `build/media` that are removed after bundling. So the media, the bundle and every temporary file stay inside the build folder, which is inside the output class's folder. On failure the renderer prints one line starting with `error:`, which `uo video build` reports. The renderer plays each scene's WAV from the scene's first frame, so speech starts 0.4 s into the scene and the drawn captions follow the caption times.
+
+## Checking the whole chain
+
+`tests/test_video_render.py` builds an invented series (a sourdough starter trial: every kind, a media scene with an image and a restricted clip, captions on) through `uo video build` with the real renderer and a stand-in voice that writes a tone per sentence in the voice package's WAV format. It checks with `ffprobe` that `video.mp4` is 1920x1080 H.264 yuv420p at 30 fps with AAC and has exactly as many frames as its scenes, that sound starts 0.4 s into every narrated scene, that `captions.srt` matches the manifest, that the restricted clip and the bundle stay inside the restricted folder (nothing new in the user temp folder or `/tmp` holds them, and `build/tmp` is empty), that the clip's file name reaches no output, and that a second build with `--scene` and `--quality draft` synthesizes nothing and renders one scene at half size.
+
+It runs as part of `uv run pytest` where the renderer is installed (`uo video setup`) and ffmpeg is on PATH, and takes about 30 seconds; elsewhere, and on CI, it is skipped (`UO_SKIP_RENDER=1` skips it too). CI runs the renderer's own checks in the job `renderer` (`npm ci`, `npm run check`, `npm test`: no browser, no render). To keep the outputs and look at the stills:
+
+```
+uv run pytest tests/test_video_render.py --basetemp=renderer/out/e2e
+# outputs: renderer/out/e2e/test_a_storyboard_becomes_a_vi0/workspace/data/restricted/updates/DR-###/
+```

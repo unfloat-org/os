@@ -5,18 +5,17 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import os
 import shutil
 import subprocess
 import sys
 
-from unfloat_os import frontmatter, schema
+from unfloat_os import schema
 from unfloat_os.channels import ChannelError
 from unfloat_os.channels.video import build as building
 from unfloat_os.channels.video import checks, series, timing
 from unfloat_os.channels.video.series import CHAPTERS, Series, SeriesError
 from unfloat_os.channels.video.storyboard import PLACEHOLDER
-from unfloat_os.records import Record, Records, Store, slugify
+from unfloat_os.records import Record, Records, Store, StoreError
 from unfloat_os.workspace import Workspace
 
 PLACEHOLDER_HEADLINES = {
@@ -86,31 +85,26 @@ def new_draft(ws: Workspace, name: str, title: str, today: dt.date) -> Record:
     title = title.strip()
     if not title or "\n" in title:
         raise ChannelError("the title is one non-empty line")
-    store = Store(ws.ops)
-    kind = schema.DRAFT
-    with store.lock():
-        drafts = series_drafts(store.load(), name)
+    values = {
+        "status": "draft",
+        "channel": "video",
+        "task": s.task,
+        "people": list(s.people),
+        "created": today.isoformat(),
+        "series": name,
+    }
+
+    def fill(records: Records) -> tuple[dict[str, str], str]:
+        # under the records lock: the number and the asks carried forward come from the drafts as they are now
+        drafts = series_drafts(records, name)
         number = (drafts[-1][0] if drafts else 0) + 1
         previous = drafts[-1][1] if drafts else None
-        rid = store.next_id(kind)
-        meta: frontmatter.Meta = {f.name: f.empty() for f in kind.fields}
-        meta.update(
-            id=rid,
-            title=title,
-            status="draft",
-            channel="video",
-            task=s.task,
-            people=list(s.people),
-            created=today.isoformat(),
-            series=name,
-            number=str(number),
-        )
-        path = store.folder(kind) / f"{rid}-{slugify(title)}.md"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(frontmatter.render(meta, skeleton(s, title, previous)))
-    return Record(kind, meta, path)
+        return {"number": str(number)}, skeleton(s, title, previous)
+
+    try:
+        return Store(ws.ops).create(schema.DRAFT.name, title, values, fill=fill)
+    except StoreError as exc:
+        raise ChannelError(str(exc)) from exc
 
 
 # handlers -----------------------------------------------------------------------
@@ -204,9 +198,11 @@ def cmd_setup(args, ws: Workspace | None) -> int:
         raise ChannelError(f"no renderer at {renderer} (package.json missing); set {building.RENDERER_ENV}")
     if shutil.which("npm") is None:
         raise ChannelError("npm not found; install Node.js")
-    result = subprocess.run(["npm", "ci"], cwd=renderer)
-    if result.returncode != 0:
-        raise ChannelError(f"npm ci failed in {renderer} (exit {result.returncode})")
+    # npm ci installs the packages; npm run setup downloads the headless browser, so no render fetches it (D16)
+    for command in (["npm", "ci"], ["npm", "run", "setup"]):
+        result = subprocess.run(command, cwd=renderer)
+        if result.returncode != 0:
+            raise ChannelError(f"{' '.join(command)} failed in {renderer} (exit {result.returncode})")
     print(f"renderer ready: {renderer}")
     return 0
 
@@ -238,5 +234,5 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.set_defaults(handler=cmd_build)
     p = commands.add_parser("list", help="every series with its updates")
     p.set_defaults(handler=cmd_list)
-    p = commands.add_parser("setup", help="install the renderer's packages (npm ci)")
+    p = commands.add_parser("setup", help="install the renderer's packages and its browser (npm ci, npm run setup)")
     p.set_defaults(handler=cmd_setup, needs_workspace=False)

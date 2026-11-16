@@ -217,7 +217,7 @@ def time_scenes(plan: Plan, speech: Mapping[str, object], audio_dir: Path) -> li
             for segment in spoken.segments:
                 begin = min(round(segment.start + timing.LEAD, 3), seconds)
                 end = min(round(segment.end + timing.LEAD, 3), seconds)
-                if end > begin:
+                if end > begin and segment.text.strip():
                     captions.append({"text": segment.text, "start": begin, "end": end})
         timed.append(Timed(scene, seconds, start, audio, captions))
         start = round(start + seconds, 3)
@@ -345,9 +345,9 @@ def build(
     else:
         video, stills, poster = out / "video.mp4", out / "stills", out / "poster.png"
         _fresh(stills)
-        render(renderer, build_dir, ["--out", str(video), "--quality", quality])
-        render(renderer, build_dir, ["--stills", str(stills)])
-        render(renderer, build_dir, ["--poster", str(poster)])
+        # one call: the renderer bundles and starts its browser once for the video, the stills and the poster
+        render(renderer, build_dir, ["--out", str(video), "--quality", quality, "--stills", str(stills),
+                                     "--poster", str(poster)])  # fmt: skip
         srt, text = out / "captions.srt", out / "transcript.md"
         srt.write_text(captions_srt(timed), encoding="utf-8")
         text.write_text(transcript(plan, timed), encoding="utf-8")
@@ -373,8 +373,10 @@ def build(
             "outputs": [p.relative_to(out).as_posix() for p in written],
         },
     )
-    provenance.write(out / "run_meta.json", meta)
-    written.append(out / "run_meta.json")
+    # a one-scene look gets its own record, so the full video's run_meta.json keeps describing video.mp4
+    meta_path = out / ("run_meta.json" if scene is None else f"scene-{scene}.run_meta.json")
+    provenance.write(meta_path, meta)
+    written.append(meta_path)
     missing = [p for p in written if not p.exists()]
     if missing:
         raise ChannelError(f"the renderer did not write {', '.join(p.relative_to(out).as_posix() for p in missing)}")

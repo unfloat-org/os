@@ -89,6 +89,39 @@ def test_parallel_processes_never_receive_the_same_id(ws):
     assert len(list((ws.ops / "records" / "tasks").glob("T-*.md"))) == 30
 
 
+TASK_VALUES = {"owner": "claude", "milestone": "ops", "status": "todo", "created": "2026-11-09"}
+
+
+def _numbered(records) -> tuple[dict, str]:
+    """A value that depends on the records already there, as `uo video new` computes an update's number."""
+    return {"done_when": f"number {len(records.tasks) + 1}"}, f"Task number {len(records.tasks) + 1}.\n"
+
+
+def _fill_many(args: tuple[str, int]) -> list[str]:
+    root, count = args
+    store = Store(Path(root))
+    return [frontmatter.parse(store.create("task", f"P {i}", TASK_VALUES, fill=_numbered).path.read_text())["done_when"]
+            for i in range(count)]  # fmt: skip
+
+
+def test_values_filled_under_the_lock_follow_the_records_written_before(ws):
+    store = Store(ws.ops)
+    first = store.create("task", "One", TASK_VALUES, fill=_numbered)
+    second = store.create("task", "Two", TASK_VALUES, fill=_numbered)
+    assert (first.id, second.id) == ("T-001", "T-002")
+    assert [frontmatter.parse(r.path.read_text())["done_when"] for r in (first, second)] == ["number 1", "number 2"]
+    assert frontmatter.body(second.path.read_text()) == "Task number 2.\n"
+    with multiprocessing.get_context("spawn").Pool(4) as pool:
+        values = [v for batch in pool.map(_fill_many, [(str(ws.ops), 4)] * 4) for v in batch]
+    assert sorted(values, key=lambda v: int(v.split()[1])) == [f"number {n}" for n in range(3, 19)]
+
+
+def test_values_filled_under_the_lock_are_checked_like_the_others(ws):
+    with pytest.raises(StoreError, match="milestone 'moon' not in"):
+        Store(ws.ops).create("task", "Bad", TASK_VALUES, fill=lambda records: ({"milestone": "moon"}, ""))
+    assert list((ws.ops / "records" / "tasks").glob("T-*.md")) == []
+
+
 def test_update_rewrites_values_and_never_changes_ids(ws):
     write_record(ws.ops, "tasks", "T-001", "thing", TASK, "Notes stay.\n")
     store = Store(ws.ops)

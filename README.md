@@ -20,7 +20,7 @@ Standard library only; Python 3.12 or newer.
 
 ## Update videos
 
-A progress update can be a short narrated video built from a draft record: the draft holds the storyboard (scenes with a chapter, a layout, narration and media), a series profile in the records repository says who the updates are for and which media they may use, and `uo video build` writes the video, captions, transcript, stills and `run_meta.json` into the data folder. Every number on screen or spoken must occur in a cited source, and a video showing restricted media is written to the restricted folder. See [docs/video.md](docs/video.md).
+A progress update can be a short narrated video built from a draft record: the draft holds the storyboard (scenes with a chapter, a layout, narration and media), a series profile in the records repository says who the updates are for and which media they may use, and `uo video build` writes the video, captions, transcript, stills and `run_meta.json` into the data folder. Every number on screen or spoken must occur in a cited source, and a video showing restricted media is written to the restricted folder. The renderer in `renderer/` is a Node project (Remotion) that `uo` runs as a subprocess; it needs Node 22.18 or newer and ffmpeg, and `uo video setup` installs it. See [docs/video.md](docs/video.md).
 
 ## Workspace
 

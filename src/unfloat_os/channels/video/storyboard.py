@@ -35,6 +35,7 @@ HEADLINE_MAX = 120
 POINTS_MAX = 3
 ROWS_MAX = 4
 ITEMS_MAX = 2
+HIGHLIGHTS_MAX = 8
 HEADING_RE = re.compile(r"^## (?P<text>.+?)\s*$")
 FENCE_OPEN = "```toml"
 FENCE = "```"
@@ -231,6 +232,8 @@ def _box(value: object) -> str | None:
 def _boxes(value: object) -> str | None:
     if not isinstance(value, list) or not value:
         return "must be a list of boxes [x, y, w, h]"
+    if len(value) > HIGHLIGHTS_MAX:
+        return f"has {len(value)} boxes; at most {HIGHLIGHTS_MAX}"
     return next((f"box {n}: {p}" for n, box in enumerate(value, 1) if (p := _box(box))), None)
 
 
@@ -304,7 +307,11 @@ KINDS: dict[str, dict[str, Prop]] = {
         "right_title": Prop(_line),
         "asks": Prop(_bool),
     },
-    "roadmap": {"headline": Prop(_headline), "current": Prop(_line), "done": Prop(_strings())},
+    "roadmap": {
+        "headline": Prop(_headline),
+        "current": Prop(_line, required=True),
+        "done": Prop(_strings(), required=True),
+    },
 }
 
 

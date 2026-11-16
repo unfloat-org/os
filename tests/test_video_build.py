@@ -45,8 +45,10 @@ def test_a_build_writes_every_output_into_the_private_updates_folder(vws):
         "bottom-line.wav", "goal-roadmap.wav", "next-asks.wav", "results-harvest.wav", "title.wav",
     ]  # fmt: skip
     assert [p.name for p in (out / "build/media").iterdir()] == ["results-harvest-1.png"]
-    assert [call[0] for call in renderer.calls] == ["--out", "--stills", "--poster"]
-    assert renderer.calls[0][1:] == [str(out / "video.mp4"), "--quality", "final"]
+    assert renderer.calls == [
+        ["--out", str(out / "video.mp4"), "--quality", "final", "--stills", str(out / "stills"),
+         "--poster", str(out / "poster.png")]
+    ]  # fmt: skip
 
 
 def test_all_narration_is_voiced_in_one_call_with_the_series_voice(vws):
@@ -155,7 +157,7 @@ def test_a_restricted_build_stays_in_the_restricted_folder_and_names_no_source_f
 def test_one_scene_can_be_built_for_a_quick_look(vws):
     garden(vws)
     _, result, _, renderer = run_build(vws, scene="results-harvest", quality="draft")
-    assert [p.name for p in result.written] == ["scene-results-harvest.mp4", "run_meta.json"]
+    assert [p.name for p in result.written] == ["scene-results-harvest.mp4", "scene-results-harvest.run_meta.json"]
     assert renderer.calls == [
         ["--out", str(result.out / "scene-results-harvest.mp4"), "--quality", "draft", "--scene", "results-harvest"]
     ]
@@ -292,3 +294,25 @@ def test_clip_size_and_length_come_from_ffprobe_and_are_a_floor_of_the_scene(vws
         and item["type"] == "video"
         and item["seconds"] == pytest.approx(12, abs=0.1)
     )
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None, reason="needs ffmpeg and ffprobe"
+)
+def test_a_clip_cut_past_its_own_length_is_refused_before_rendering(vws):
+    clip = vws.data_dir("private") / "updates/assets/garden/u3/walk.mp4"
+    clip.parent.mkdir(parents=True, exist_ok=True)
+    lavfi = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=320x180:d=4:r=30", "-pix_fmt", "yuv420p"]
+    subprocess.run([*lavfi, str(clip)], check=True)
+    from fixtures.video.helpers import GARDEN_BOARD
+
+    for cut, message in [
+        ("end = 9", "item 1: 'end' 9 s is past the end of the clip (4.00 s)"),
+        ("start = 5", "item 1: 'start' 5 s is not before the end of the clip (4.00 s)"),
+    ]:
+        body = GARDEN_BOARD.replace("u3/harvest.png", "u3/walk.mp4").replace(
+            "highlight = [[0.55, 0.10, 0.35, 0.80]]", cut
+        )
+        garden(vws, body=body)
+        errors = checks.prepare(vws, rid("DR", 1)).report.errors
+        assert [e.message for e in errors] == [f"scene results-harvest: media: {message}"]

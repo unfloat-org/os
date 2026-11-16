@@ -25,6 +25,7 @@ Read `../ops/AGENTS.md` first when it exists: the project's records, policy and 
 | `provenance.py` | `run_meta.json` for analysis runs: commit, uncommitted changes, Python, package versions, input hashes |
 | `drafts.py` | The email draft file format, shared by `uo check` and `uo gmail` |
 | `channels/video/` | Update videos (`docs/video.md`): storyboard, series profiles, references and data classes, checks, timing, build folder and renderer call, `uo video`; `voice/` is the narration |
+| `renderer/` | The video renderer (Node, Remotion; its own `README.md`): reads a build folder's `manifest.json`, audio and media and draws the video, stills and poster. Knows nothing about records, series or data classes; run by `build.py` as a subprocess |
 | `integrity.py`, `ids.py` | Append-only log and decisions; ID collisions across machines, `uo push-check`, `uo renumber` |
 | `health.py`, `status.py` | Hooks enabled, remotes, unpushed commits, CONTEXT freshness; `uo status` |
 | `migrate.py` | `uo migrate`: schema changes applied to every record |
@@ -38,6 +39,7 @@ Read `../ops/AGENTS.md` first when it exists: the project's records, policy and 
 | Lint, format | `uv run ruff check . && uv run ruff format .` |
 | Checks | `uo check --repo .` (also the pre-commit hook and CI) |
 | Video | `uo video check DR-###`, `uo video build DR-###` (needs the renderer: `uo video setup`) |
+| Renderer | `uo video setup` (`npm ci`, `npm run setup` in `renderer/`); then `cd renderer && npm run check && npm test` (also CI); `npm run test:render` renders the renderer's fixture. With the renderer installed, `uv run pytest` also runs `tests/test_video_render.py`: an invented series built end to end through `uo video build` |
 
 ## End of a session
 

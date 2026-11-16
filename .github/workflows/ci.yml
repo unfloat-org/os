@@ -14,3 +14,18 @@ jobs:
       - run: uv run ruff check . && uv run ruff format --check .
       - run: uv run pytest
       - run: uv run uo check --repo .
+  renderer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: renderer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      # packages, types, lint and the validator and command-line tests; no browser download and no render
+      - run: npm ci
+      - run: npm run check
+      - run: npm test

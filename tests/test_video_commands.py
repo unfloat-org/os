@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
+from pathlib import Path
 
 import pytest
 from conftest import TASK, rid, write_record
@@ -97,3 +99,48 @@ def test_the_tracker_lists_the_updates_of_each_series_with_bottom_line_and_asks(
 def test_the_tracker_has_no_video_section_without_series(ws):
     text = render.render_records(Store(ws.ops).load(), dt.date(2026, 11, 18))
     assert "## Video" not in text
+
+
+def test_uo_video_new_after_uo_new_draft_takes_the_next_id_and_number(vws, capsys):
+    garden(vws, number=3)
+    assert cli.main(["new", "draft", "A note", "--set", "channel=document"]) == 0
+    assert cli.main(["video", "new", "garden", "Autumn"]) == 0
+    assert cli.main(["video", "new", "garden", "Winter"]) == 0
+    files = sorted(p.name for p in (vws.ops / "records/drafts").glob("DR-*.md"))
+    assert files == [
+        f"{rid('DR', 1)}-update-3.md", f"{rid('DR', 2)}-a-note.md",
+        f"{rid('DR', 3)}-autumn.md", f"{rid('DR', 4)}-winter.md",
+    ]  # fmt: skip
+    numbers = [frontmatter.parse(draft_file(vws, n).read_text())["number"] for n in (3, 4)]
+    assert numbers == ["4", "5"]
+    assert check.check_records(vws)[0].errors == []
+
+
+def fake_npm(tmp_path, monkeypatch, fail_on: str = "") -> Path:
+    """An `npm` on PATH that logs its arguments and fails for one subcommand; a renderer folder to run it in."""
+    bin_dir, renderer = tmp_path / "bin", tmp_path / "renderer"
+    bin_dir.mkdir()
+    renderer.mkdir()
+    (renderer / "package.json").write_text("{}")
+    log = tmp_path / "npm.log"
+    npm = bin_dir / "npm"
+    npm.write_text(f'#!/bin/sh\necho "$PWD $*" >> {log}\n[ "$1" = "{fail_on}" ] && exit 3\nexit 0\n')
+    npm.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("UNFLOAT_RENDERER", str(renderer))
+    return log
+
+
+def test_setup_installs_the_packages_and_then_the_browser(tmp_path, monkeypatch, capsys):
+    log = fake_npm(tmp_path, monkeypatch)
+    assert cli.main(["video", "setup"]) == 0
+    renderer = (tmp_path / "renderer").resolve()
+    assert log.read_text().splitlines() == [f"{renderer} ci", f"{renderer} run setup"]
+    assert capsys.readouterr().out.endswith(f"renderer ready: {renderer}\n")
+
+
+def test_setup_stops_when_npm_ci_fails(tmp_path, monkeypatch, capsys):
+    log = fake_npm(tmp_path, monkeypatch, fail_on="ci")
+    assert cli.main(["video", "setup"]) == 1
+    assert log.read_text().splitlines() == [f"{(tmp_path / 'renderer').resolve()} ci"]
+    assert "error: npm ci failed in" in capsys.readouterr().err

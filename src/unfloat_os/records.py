@@ -18,7 +18,7 @@ import functools
 import os
 import re
 import unicodedata
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -281,8 +281,21 @@ class Store:
         if problems:
             raise StoreError(f"{subject}: {'; '.join(problems)}")
 
-    def create(self, kind_name: str, title: str, values: Mapping[str, Value], body: str = "") -> Record:
-        """Create a record with the next free ID; refuses values outside the schema or missing required ones."""
+    def create(
+        self,
+        kind_name: str,
+        title: str,
+        values: Mapping[str, Value],
+        body: str = "",
+        *,
+        fill: Callable[[Records], tuple[Mapping[str, Value], str]] | None = None,
+    ) -> Record:
+        """Create a record with the next free ID; refuses values outside the schema or missing required ones.
+
+        `fill`, when given, runs under the lock with the records as they are then and returns more values and
+        the body, for values that depend on other records (the next number of a video series): two creates can
+        then never compute the same value.
+        """
         kind = self.schema.kinds.get(kind_name)
         if kind is None:
             raise StoreError(f"unknown kind '{kind_name}'; one of {', '.join(self.schema.kinds)}")
@@ -290,6 +303,10 @@ class Store:
         if not title.strip():
             raise StoreError(f"{kind.name} needs a {kind.title_key}")
         with self.lock():
+            if fill is not None:
+                more, body = fill(self.load())
+                values = {**values, **more}
+                self._refuse(kind, kind_name, values)
             rid = self.next_id(kind)
             meta: Meta = {}
             for f in kind.fields:
