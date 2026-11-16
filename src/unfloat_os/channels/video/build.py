@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import wave
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -93,13 +94,9 @@ def renderer_versions(renderer: Path) -> dict[str, str]:
 
 
 def voice_package():
-    try:
-        from unfloat_os.channels.video import voice
-    except ImportError as exc:
-        raise ChannelError(
-            "the voice package unfloat_os.channels.video.voice is not in this checkout of os; "
-            "builds need it (it arrives with the voice increment)"
-        ) from exc
+    """The voice package (C4); a function so tests can put a stand-in in its place."""
+    from unfloat_os.channels.video import voice
+
     return voice
 
 
@@ -283,6 +280,9 @@ class Result:
     written: tuple[Path, ...]
     restricted_by: tuple[MediaUse, ...]
     seconds: float
+    voice: str = ""  # provider and voice used, for example "kokoro af_heart"
+    voice_seconds: float = 0.0  # wall clock of the voice step
+    voiced: int = 0  # sentences synthesized by this build (new files in the voice cache)
 
 
 def _fresh(folder: Path) -> Path:
@@ -330,7 +330,11 @@ def build(
     cache = ws.data_dir("private") / "updates" / "cache" / "voice"
     cache.mkdir(parents=True, exist_ok=True)
     items = {s.id: s.narration for s in plan.board.scenes if s.narration}
+    cached = set(cache.glob("*.wav"))
+    started = time.monotonic()
     speech = voice.synthesize(items, settings, voice_dir, cache) if items else {}
+    voice_seconds = round(time.monotonic() - started, 2)
+    voiced = len(set(cache.glob("*.wav")) - cached)
     timed = time_scenes(plan, speech, audio_dir)
     shutil.rmtree(voice_dir)
     (build_dir / "manifest.json").write_text(
@@ -367,7 +371,13 @@ def build(
             "quality": quality,
             "scene": scene,
             "seconds": round(sum(t.seconds for t in timed), 3),
-            "voice": {"provider": settings.provider, "voice": settings.voice, "speed": settings.speed},
+            "voice": {
+                "provider": settings.provider,
+                "voice": settings.voice,
+                "speed": settings.speed,
+                "synthesized": voiced,
+                "seconds": voice_seconds,
+            },
             "renderer": renderer_versions(renderer),
             "input_refs": [ref for ref, _ in inputs],
             "outputs": [p.relative_to(out).as_posix() for p in written],
@@ -380,4 +390,12 @@ def build(
     missing = [p for p in written if not p.exists()]
     if missing:
         raise ChannelError(f"the renderer did not write {', '.join(p.relative_to(out).as_posix() for p in missing)}")
-    return Result(out, tuple(written), plan.restricted_by, sum(t.seconds for t in timed))
+    return Result(
+        out,
+        tuple(written),
+        plan.restricted_by,
+        sum(t.seconds for t in timed),
+        f"{settings.provider} {settings.voice}".strip(),
+        voice_seconds,
+        voiced,
+    )

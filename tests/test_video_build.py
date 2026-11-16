@@ -126,7 +126,9 @@ def test_run_meta_records_the_voice_the_inputs_and_the_commit(vws):
     garden(vws)
     _, result, _, _ = run_build(vws)
     meta = json.loads((result.out / "run_meta.json").read_text())
-    assert meta["voice"] == {"provider": "silent", "voice": "", "speed": 1.0}
+    voice = meta["voice"]
+    assert (voice["provider"], voice["voice"], voice["speed"], voice["synthesized"]) == ("silent", "", 1.0, 0)
+    assert voice["seconds"] >= 0
     assert meta["input_refs"][:2] == [f"ops:records/drafts/{rid('DR', 1)}-update-3.md", "ops:config/video/garden.toml"]
     assert "private:updates/assets/garden/u3/harvest.png" in meta["input_refs"]
     assert len(meta["input_files"]) == len(meta["input_refs"]) and all(
@@ -175,6 +177,22 @@ def test_a_draft_that_fails_the_check_is_not_built(vws, monkeypatch, capsys):
     assert not (vws.data_dir("private") / "updates" / rid("DR", 1)).exists()
 
 
+def test_a_second_build_with_the_real_voice_synthesizes_nothing(vws, monkeypatch, capsys):
+    garden(vws)
+    monkeypatch.setenv("UNFLOAT_WORKSPACE", str(vws.root))
+    monkeypatch.setattr(build, "require_renderer", lambda renderer: None)
+    monkeypatch.setattr(build, "run_renderer", StubRenderer())
+    assert cli.main(["video", "build", rid("DR", 1), "--provider", "silent"]) == 0
+    first = capsys.readouterr().out
+    assert cli.main(["video", "build", rid("DR", 1), "--provider", "silent"]) == 0
+    second = capsys.readouterr().out
+    voiced = [line for line in first.splitlines() if line.startswith("voice: silent,")]
+    assert voiced and " 0 sentence(s)" not in voiced[0]
+    assert "voice: silent, 0 sentence(s) synthesized" in second
+    meta = json.loads((vws.data_dir("private") / "updates" / rid("DR", 1) / "run_meta.json").read_text())
+    assert meta["voice"]["provider"] == "silent" and meta["voice"]["synthesized"] == 0
+
+
 def test_without_a_renderer_build_and_setup_name_uo_video_setup(vws, monkeypatch, capsys, tmp_path):
     garden(vws)
     monkeypatch.setenv("UNFLOAT_WORKSPACE", str(vws.root))
@@ -190,27 +208,6 @@ def test_without_a_renderer_build_and_setup_name_uo_video_setup(vws, monkeypatch
     monkeypatch.setenv("UNFLOAT_RENDERER", str(tmp_path / "nothing"))
     assert cli.main(["video", "setup"]) == 1
     assert "error: no renderer at" in capsys.readouterr().err
-
-
-def test_without_the_voice_package_a_build_says_so(vws, monkeypatch, capsys, tmp_path):
-    try:
-        from unfloat_os.channels.video import voice  # noqa: F401
-    except ImportError:
-        pass
-    else:
-        pytest.skip("the voice package is installed")
-    garden(vws)
-    renderer = tmp_path / "renderer"
-    (renderer / "bin").mkdir(parents=True)
-    (renderer / "node_modules").mkdir()
-    (renderer / "package.json").write_text("{}")
-    (renderer / "bin/render.mjs").write_text("")
-    monkeypatch.setenv("UNFLOAT_WORKSPACE", str(vws.root))
-    monkeypatch.setenv("UNFLOAT_RENDERER", str(renderer))
-    if shutil.which("node") is None:
-        pytest.skip("node is not installed")
-    assert cli.main(["video", "build", rid("DR", 1)]) == 1
-    assert "error: the voice package unfloat_os.channels.video.voice is not in this checkout" in capsys.readouterr().err
 
 
 def fake_node(folder: Path, script: str) -> None:

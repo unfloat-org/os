@@ -13,11 +13,11 @@ import struct
 import subprocess
 import wave
 import zlib
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from conftest import DRAFT, rid, write_record
 
+from unfloat_os.channels.video.voice import Segment, Speech, VoiceSettings
 from unfloat_os.workspace import Workspace
 
 GARDEN = """\
@@ -193,29 +193,6 @@ def video_draft(ws: Workspace, n: int, series: str, number: int, body: str, stat
 # the fake voice (contract C4) -------------------------------------------------------
 
 WORD_SECONDS = 0.3
-
-
-@dataclass(frozen=True)
-class VoiceSettings:
-    provider: str
-    voice: str = ""
-    speed: float = 1.0
-    lexicon: dict = field(default_factory=dict)
-    options: dict = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class Segment:
-    text: str
-    start: float
-    end: float
-
-
-@dataclass(frozen=True)
-class Speech:
-    path: Path
-    seconds: float
-    segments: tuple[Segment, ...]
 
 
 def silence(path: Path, seconds: float) -> None:

@@ -157,6 +157,7 @@ def cmd_build(args, ws: Workspace) -> int:
     )
     for path in result.written:
         print(f"wrote {path}")
+    print(f"voice: {result.voice}, {result.voiced} sentence(s) synthesized, {result.voice_seconds:.1f} s")
     print(f"{plan.record.id}: {timing.clock(result.seconds)} ({result.seconds:.1f} s), output class {plan.data_class}")
     for use in result.restricted_by:
         print(

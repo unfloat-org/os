@@ -219,12 +219,26 @@ The output class is `restricted` when any media is restricted and not named in t
 | `transcript.md` | The narration by chapter, the on-screen text, the figures named by scene, the sources of each scene |
 | `poster.png` | A frame of the first scene |
 | `stills/<scene id>.png` | One frame per scene, at two thirds of its length |
-| `run_meta.json` | Commit and uncommitted changes of `os`, renderer package versions, voice provider and voice, input hashes |
+| `run_meta.json` | Commit and uncommitted changes of `os`, renderer package versions, voice provider, voice and speed with the number of sentences this build synthesized and the voice step's seconds, input hashes |
 | `build/` | What the renderer reads: `manifest.json`, `audio/<scene id>.wav` (48 kHz mono 16-bit), `media/` |
 
-The voice cache is `private:updates/cache/voice/`; a second build with unchanged narration synthesizes nothing.
+The voice cache is `private:updates/cache/voice/`; a second build with unchanged narration synthesizes nothing. The build prints one line for the voice, for example `voice: kokoro af_heart, 0 sentence(s) synthesized, 0.0 s`.
 
 Timing: a narrated scene lasts a lead of 0.4 seconds, its speech, and a tail of 1 second; `seconds` and the length of its clips are floors. The lead is written into the scene's WAV, so the renderer plays the audio from the first frame of the scene and caption times (seconds from the start of the scene) include it. Scene lengths are written on whole frames.
+
+## The voice (contract C4)
+
+`voice/` turns the narration of all scenes into speech in one call (`synthesize`), so a local model starts once per build. The unit is the sentence: each is synthesized on its own and cached by provider, voice, speed, options and the spoken text (after the lexicon), and the sentences of a scene are joined with 0.35 s pauses (0.7 s between paragraphs). That gives exact caption times without an aligner, and a changed sentence is the only one synthesized again. A caption longer than 84 characters is shown in parts, cut near the middle, at a clause boundary when one is close.
+
+| Provider | Needs | Notes |
+| --- | --- | --- |
+| `silent` | nothing | Silence at `options.words_per_minute` (default 140): tests and timing drafts |
+| `say` | macOS | `voice` is a `say` voice (`say -v '?'`); an unknown name is refused. `say` changes its rate in steps, so `speed` 0.9 sounds like 1.0; use 0.8 or below |
+| `kokoro` | `uv` (`uvx` runs Kokoro-82M through mlx-audio, Apple silicon) | Default voice `af_heart`; the first run downloads the model and its environment. About 0.1 s per second of audio |
+| `elevenlabs` | an API key in `~/.config/unfloat/elevenlabs/api_key` or `ELEVENLABS_API_KEY` | Sends each spoken sentence over the network: a cloud service, not for project content without a decision. Refuses with one line without a key |
+| `file` | `options.path`: a WAV, or a folder of `<scene id>.wav` | A recorded narration; not cached, no lexicon |
+
+`--provider` and `--voice` on `uo video build` override the series for one build; `run_meta.json` records what was used. The lexicon of a series is spelled for the provider it was written for.
 
 ## The build folder and the renderer (contract C3)
 
@@ -281,7 +295,7 @@ A full build is one call, so the renderer bundles and starts its browser once. T
 
 ## Checking the whole chain
 
-`tests/test_video_render.py` builds an invented series (a sourdough starter trial: every kind, a media scene with an image and a restricted clip, captions on) through `uo video build` with the real renderer and a stand-in voice that writes a tone per sentence in the voice package's WAV format. It checks with `ffprobe` that `video.mp4` is 1920x1080 H.264 yuv420p at 30 fps with AAC and has exactly as many frames as its scenes, that sound starts 0.4 s into every narrated scene, that `captions.srt` matches the manifest, that the restricted clip and the bundle stay inside the restricted folder (nothing new in the user temp folder or `/tmp` holds them, and `build/tmp` is empty), that the clip's file name reaches no output, and that a second build with `--scene` and `--quality draft` synthesizes nothing and renders one scene at half size.
+`tests/test_video_render.py` builds an invented series (a sourdough starter trial: every kind, a media scene with an image and a restricted clip, captions on) through `uo video build` with the real renderer and a stand-in voice that writes a tone per sentence in the voice package's WAV format (deterministic and offline; the real providers are proved by hand, `tests/test_video_voice.py` covers the package). It checks with `ffprobe` that `video.mp4` is 1920x1080 H.264 yuv420p at 30 fps with AAC and has exactly as many frames as its scenes, that sound starts 0.4 s into every narrated scene, that `captions.srt` matches the manifest, that the restricted clip and the bundle stay inside the restricted folder (nothing new in the user temp folder or `/tmp` holds them, and `build/tmp` is empty), that the clip's file name reaches no output, and that a second build with `--scene` and `--quality draft` synthesizes nothing and renders one scene at half size.
 
 It runs as part of `uv run pytest` where the renderer is installed (`uo video setup`) and ffmpeg is on PATH, and takes about 30 seconds; elsewhere, and on CI, it is skipped (`UO_SKIP_RENDER=1` skips it too). CI runs the renderer's own checks in the job `renderer` (`npm ci`, `npm run check`, `npm test`: no browser, no render). To keep the outputs and look at the stills:
 
