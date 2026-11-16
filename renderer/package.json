@@ -1,0 +1,44 @@
+{
+  "name": "unfloat-renderer",
+  "version": "1.0.0",
+  "description": "Draws a build folder (manifest.json, audio, media) as a narrated update video",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "@fontsource/inter": "5.3.0",
+    "@remotion/bundler": "4.0.544",
+    "@remotion/cli": "4.0.544",
+    "@remotion/fonts": "4.0.544",
+    "@remotion/layout-utils": "4.0.544",
+    "@remotion/media": "4.0.544",
+    "@remotion/renderer": "4.0.544",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.544",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.544",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/web": "0.0.166",
+    "eslint": "10.12.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "allowScripts": {
+    "esbuild": false
+  },
+  "scripts": {
+    "check": "tsc && eslint .",
+    "test": "node --test tests/*.test.mjs",
+    "fixture": "node fixtures/make.mjs",
+    "test:render": "node tests/render.mjs",
+    "setup": "remotion browser ensure",
+    "studio": "node fixtures/make.mjs && remotion studio --public-dir=fixtures/build --props=fixtures/build/props.json"
+  }
+}

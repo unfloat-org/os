@@ -1,0 +1,250 @@
+#!/usr/bin/env node
+// The renderer's command line (contract C3):
+//   node bin/render.mjs --build <build> --out <file.mp4> [--quality draft|final] [--scene <id>]
+//   node bin/render.mjs --build <build> --stills <folder>
+//   node bin/render.mjs --build <build> --poster <file.png>
+// Reads <build>/manifest.json and nothing else. The bundle goes to <build>/bundle
+// and every temporary file under TMPDIR (set to <build>/tmp before Remotion
+// starts), so a build folder never leaves a copy of its media anywhere else.
+// No licence key is ever passed: a render sends no telemetry (Remotion's
+// licensing page, https://www.remotion.dev/docs/telemetry).
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+import { checkFiles, parseManifest } from "../src/validate.ts";
+import { sceneSpans, stillFrame, totalFrames } from "../src/timing.ts";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const COMPOSITION = "Update";
+const USAGE =
+  "usage: node bin/render.mjs --build <build> (--out <file.mp4> [--quality draft|final] [--scene <id>] | --stills <folder> | --poster <file.png>)";
+
+class UsageError extends Error {}
+
+const fail = (message) => {
+  const line = String(message).split("\n")[0].replace(/^error:\s*/i, "");
+  process.stderr.write(`error: ${line}\n`);
+  process.exit(1);
+};
+
+const options = () => {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: process.argv.slice(2),
+      options: {
+        build: { type: "string" },
+        out: { type: "string" },
+        quality: { type: "string", default: "final" },
+        scene: { type: "string" },
+        stills: { type: "string" },
+        poster: { type: "string" },
+        help: { type: "boolean", short: "h" },
+      },
+      allowPositionals: false,
+    });
+  } catch (err) {
+    throw new UsageError(`${err.message}. ${USAGE}`);
+  }
+  const v = parsed.values;
+  if (v.help) {
+    process.stdout.write(`${USAGE}\n`);
+    process.exit(0);
+  }
+  if (!v.build) throw new UsageError(`--build is required. ${USAGE}`);
+  if (!v.out && !v.stills && !v.poster) {
+    throw new UsageError(`one of --out, --stills, --poster is required. ${USAGE}`);
+  }
+  if (!["draft", "final"].includes(v.quality)) {
+    throw new UsageError(`--quality must be draft or final, not "${v.quality}"`);
+  }
+  if (v.scene && !v.out) throw new UsageError("--scene needs --out");
+  return v;
+};
+
+const readManifest = (build) => {
+  const file = path.join(build, "manifest.json");
+  if (!existsSync(file)) throw new Error(`${file}: not found`);
+  let data;
+  try {
+    data = JSON.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    throw new Error(`manifest.json is not valid JSON: ${err.message}`);
+  }
+  try {
+    const manifest = parseManifest(data);
+    checkFiles(manifest, build);
+    return manifest;
+  } catch (err) {
+    throw new Error(`manifest.json: ${err.message}`);
+  }
+};
+
+/**
+ * The public folder of the bundle: the build folder's audio/ and media/, linked
+ * (not copied) into <build>/tmp, because the build folder also holds the bundle
+ * and the temp files themselves. Remotion keeps the links in the bundle.
+ */
+const stagePublicDir = (build) => {
+  const dir = path.join(build, "tmp", "public");
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  for (const name of ["audio", "media"]) {
+    const target = path.join(build, name);
+    if (existsSync(target)) symlinkSync(target, path.join(dir, name));
+  }
+  return dir;
+};
+
+const progress = (label) => {
+  let last = -1;
+  return (fraction) => {
+    const pct = Math.floor(fraction * 10) * 10;
+    if (pct !== last) {
+      last = pct;
+      process.stdout.write(`${label} ${pct}%\n`);
+    }
+  };
+};
+
+const main = async () => {
+  const opts = options();
+  const build = path.resolve(opts.build);
+  if (!existsSync(build) || !statSync(build).isDirectory()) {
+    throw new Error(`build folder not found: ${build}`);
+  }
+  const manifest = readManifest(build);
+
+  // Everything Remotion and its browser write goes here, before they start.
+  const tmp = path.join(build, "tmp");
+  mkdirSync(tmp, { recursive: true });
+  for (const key of ["TMPDIR", "TMP", "TEMP"]) process.env[key] = tmp;
+
+  const { bundle } = await import("@remotion/bundler");
+  const renderer = await import("@remotion/renderer");
+  const { selectComposition, renderMedia, renderStill, openBrowser, ensureBrowser } =
+    renderer;
+
+  await ensureBrowser({ logLevel: "error" });
+
+  const bundleDir = path.join(build, "bundle");
+  rmSync(bundleDir, { recursive: true, force: true });
+  const publicDir = stagePublicDir(build);
+  const serveUrl = await bundle({
+    entryPoint: path.join(root, "src", "index.ts"),
+    rootDir: root,
+    outDir: bundleDir,
+    publicDir,
+    onSymlinkDetected: () => {},
+  });
+  rmSync(publicDir, { recursive: true, force: true });
+  process.stdout.write(`bundle: ${path.relative(process.cwd(), bundleDir) || bundleDir}\n`);
+
+  const inputProps = { manifest };
+  const common = { serveUrl, inputProps, logLevel: "error" };
+  const browser = await openBrowser("chrome", { logLevel: "error" });
+  try {
+    const composition = await selectComposition({
+      ...common,
+      id: COMPOSITION,
+      puppeteerInstance: browser,
+    });
+    const spans = sceneSpans(manifest.scenes, manifest.fps);
+    if (composition.durationInFrames !== totalFrames(manifest.scenes, manifest.fps)) {
+      throw new Error("composition length differs from the sum of scene lengths");
+    }
+
+    if (opts.stills) {
+      const dir = path.resolve(opts.stills);
+      mkdirSync(dir, { recursive: true });
+      for (const [i, scene] of manifest.scenes.entries()) {
+        await renderStill({
+          ...common,
+          composition,
+          puppeteerInstance: browser,
+          frame: stillFrame(spans[i]),
+          imageFormat: "png",
+          output: path.join(dir, `${scene.id}.png`),
+        });
+      }
+      process.stdout.write(`stills: ${manifest.scenes.length} in ${dir}\n`);
+    }
+
+    if (opts.poster) {
+      const file = path.resolve(opts.poster);
+      mkdirSync(path.dirname(file), { recursive: true });
+      await renderStill({
+        ...common,
+        composition,
+        puppeteerInstance: browser,
+        frame: stillFrame(spans[0]),
+        imageFormat: "png",
+        output: file,
+      });
+      process.stdout.write(`poster: ${file}\n`);
+    }
+
+    if (opts.out) {
+      const file = path.resolve(opts.out);
+      mkdirSync(path.dirname(file), { recursive: true });
+      let frameRange = null;
+      if (opts.scene) {
+        const at = manifest.scenes.findIndex((s) => s.id === opts.scene);
+        if (at < 0) throw new UsageError(`--scene: no scene "${opts.scene}" in the manifest`);
+        frameRange = [spans[at].from, spans[at].from + spans[at].frames - 1];
+      }
+      const draft = opts.quality === "draft";
+      // write beside the target and rename, so a failed render leaves no partial file
+      const partial = `${file}.partial.mp4`;
+      await renderMedia({
+        ...common,
+        composition,
+        puppeteerInstance: browser,
+        codec: "h264",
+        pixelFormat: "yuv420p",
+        audioCodec: "aac",
+        audioBitrate: "192k",
+        sampleRate: 48000,
+        crf: draft ? 28 : 16,
+        x264Preset: draft ? "veryfast" : "medium",
+        imageFormat: "jpeg",
+        jpegQuality: draft ? 80 : 95,
+        scale: draft ? 0.5 : 1,
+        concurrency: 4,
+        frameRange,
+        outputLocation: partial,
+        overwrite: true,
+        enforceAudioTrack: true,
+        onProgress: ({ progress: p }) => progressVideo(p),
+        ffmpegOverride: ({ args }) => withFaststart(args),
+      });
+      renameSync(partial, file);
+      process.stdout.write(`video: ${file}\n`);
+    }
+  } finally {
+    await browser.close({ silent: true }).catch(() => {});
+  }
+};
+
+const progressVideo = progress("render");
+
+/** Put the moov atom first (movflags +faststart) on the final mux. */
+const withFaststart = (args) => {
+  if (args.includes("-movflags")) return args;
+  const out = args.slice(0, -1);
+  return [...out, "-movflags", "+faststart", args[args.length - 1]];
+};
+
+main().catch((err) => {
+  if (process.env.UO_RENDER_DEBUG) console.error(err);
+  fail(err instanceof Error ? err.message : err);
+});

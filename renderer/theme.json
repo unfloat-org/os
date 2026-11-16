@@ -1,0 +1,15 @@
+{
+  "color": {
+    "bg": "#14101A",
+    "surface": "#1F1826",
+    "line": "#3A2F45",
+    "text": "#F4EFF8",
+    "muted": "#B9AEC6",
+    "accent": "#FF8A4C",
+    "accent2": "#FF3D8B",
+    "data": ["#6CC5F0", "#FFB454", "#C9A0FF", "#7FD8A6"],
+    "neutral": "#8E8598",
+    "detect": "#3FE0FF"
+  },
+  "font": { "family": "Inter", "fallback": "Helvetica Neue, Arial, sans-serif" }
+}
