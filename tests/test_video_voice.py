@@ -30,7 +30,7 @@ from unfloat_os.channels.video.voice.kokoro import Kokoro, lang_code
 from unfloat_os.channels.video.voice.say import parse_voices
 
 NARRATION = (
-    "The tomato beds with mulch gave more fruit. We counted 41 percent more, e.g. 3.6 kilograms a bed.\n\n"
+    "The tomato beds with mulch gave more fruit. We counted 41 percent more, e.g. 2.7 kilograms a bed.\n\n"
     "Dr. Rivera checked the scales twice. Was the soil the same? It was."
 )
 
@@ -83,9 +83,9 @@ def sentences(text: str) -> list[str]:
 
 
 def test_decimals_do_not_end_a_sentence():
-    assert sentences("It is 0.4 millimetres wide. Two scans differ by up to 3.6 times.") == [
-        "It is 0.4 millimetres wide.",
-        "Two scans differ by up to 3.6 times.",
+    assert sentences("The path is 0.8 metres wide. Two beds differ by up to 2.7 times.") == [
+        "The path is 0.8 metres wide.",
+        "Two beds differ by up to 2.7 times.",
     ]
 
 
@@ -112,9 +112,9 @@ def test_paragraphs_are_kept_and_white_space_is_collapsed():
 
 
 def test_lexicon_replaces_whole_words_in_the_case_given_longest_first():
-    lexicon = {"YAG": "yag", "vitreous": "vit ree us", "vitreous body": "glass body", "x": "ex"}
-    assert textlib.apply_lexicon("YAG and vitreous body, vitreous, yag, vitreousness, x-ray, box", lexicon) == (
-        "yag and glass body, vit ree us, yag, vitreousness, ex-ray, box"
+    lexicon = {"NPK": "en pee kay", "compost": "com post", "compost heap": "the heap", "x": "ex"}
+    assert textlib.apply_lexicon("NPK and compost heap, compost, npk, composting, x-ray, box", lexicon) == (
+        "en pee kay and the heap, com post, npk, composting, ex-ray, box"
     )
 
 
@@ -124,8 +124,8 @@ def test_a_replacement_is_not_replaced_again():
 
 def test_captions_split_at_clause_boundaries_and_stay_short():
     sentence = (
-        "Two scans of the same eye, months apart, can differ by up to 3.6 times, "
-        "so a smaller change in one eye cannot be called real without a second look."
+        "Two weighings of the same bed, weeks apart, can differ by up to 2.7 times, "
+        "so a smaller change in one bed cannot be called real without a second count."
     )
     parts = textlib.caption_parts(sentence)
     assert len(parts) >= 2
@@ -173,9 +173,9 @@ def test_segments_cover_the_audio_in_order_with_the_pauses_between(tmp_path):
 
 
 def test_segment_text_is_as_written_not_as_spoken(tmp_path):
-    settings = VoiceSettings("silent", lexicon={"YAG": "yag"})
-    speech = synthesize({"s": "The YAG test is next."}, settings, tmp_path / "out", tmp_path / "cache")["s"]
-    assert [s.text for s in speech.segments] == ["The YAG test is next."]
+    settings = VoiceSettings("silent", lexicon={"NPK": "en pee kay"})
+    speech = synthesize({"s": "The NPK test is next."}, settings, tmp_path / "out", tmp_path / "cache")["s"]
+    assert [s.text for s in speech.segments] == ["The NPK test is next."]
 
 
 def test_long_sentences_are_timed_in_proportion_to_their_characters(tmp_path):
@@ -430,10 +430,10 @@ def test_elevenlabs_request_carries_only_the_spoken_sentence(tmp_path, monkeypat
         "elevenlabs",
         "voice123",
         speed=0.9,
-        lexicon={"YAG": "yag"},
+        lexicon={"NPK": "en pee kay"},
         options={"output_format": "pcm_48000", "model_id": "eleven_v4", "voice_settings": {"stability": 0.6}},
     )
-    synthesize({"s": "The YAG test is next. It is 3.6 times."}, settings, tmp_path / "o", tmp_path / "c")
+    synthesize({"s": "The NPK test is next. It is 2.7 times."}, settings, tmp_path / "o", tmp_path / "c")
     assert len(transport.requests) == 2
     first = transport.requests[0]
     assert first["method"] == "POST"
@@ -441,13 +441,13 @@ def test_elevenlabs_request_carries_only_the_spoken_sentence(tmp_path, monkeypat
         first["url"] == "https://api.elevenlabs.io/v1/text-to-speech/voice123/with-timestamps?output_format=pcm_48000"
     )
     assert first["data"] == {
-        "text": "The yag test is next.",
+        "text": "The en pee kay test is next.",
         "model_id": "eleven_v4",
         "voice_settings": {"stability": 0.6, "speed": 0.9},
     }
     assert first["headers"] == {"xi-api-key": "secret-key"}
     assert first["redact"] == ["secret-key"]
-    assert transport.requests[1]["data"]["text"] == "It is 3.6 times."
+    assert transport.requests[1]["data"]["text"] == "It is 2.7 times."
 
 
 def test_elevenlabs_answer_is_decoded_into_the_standard_wav(tmp_path, monkeypatch):
