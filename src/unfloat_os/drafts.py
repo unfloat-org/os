@@ -76,6 +76,9 @@ def read_email(path: Path) -> dict:
         "reply_to": meta.get("reply_to") or None,
         "reply_thread": meta.get("reply_thread") or None,
         "attachments": list(meta.get("attachments") or []),
+        "gmail_id": str(meta.get("gmail_id") or "") or None,
+        "task": meta.get("task") or None,
+        "people": list(meta.get("people") or []),
         "subject": subject,
         "body": body,
     }

@@ -1,17 +1,24 @@
-"""Daniil's Gmail for outreach (D-016 to D-018): drafts from records/drafts, and the replies to them.
+"""Daniil's Gmail for outreach (D-016 to D-018, D-025): drafts from records/drafts, and the mail around them.
 
-Scopes: gmail.compose (drafts) and gmail.readonly (replies). The adapter never
+Scopes: gmail.compose (drafts) and gmail.readonly (reading). The adapter never
 sends, deletes or changes mail, and reading does not mark anything as read.
-Reading is limited to threads that match the sent email drafts in records/drafts
-(their To addresses and subjects); there is no free-text search.
+Reading is limited to threads with people in the records (their `email` field and
+the To and Cc lines of email drafts) and threads carrying the subject of a recently
+sent email draft; there is no free-text search. Threads are kept in a local cache
+and only threads that changed are downloaded again (unfloat_os.channels.mailbox).
+A thread listed under [gmail.blind] in config/channels.toml is shown without its
+text or attachments (for example while a pre-registration is not yet committed).
 
+  uo gmail inbox [--days N] [--offline]     # mail in scope that the records do not hold yet
+  uo gmail done MSG[,MSG] REFS "summary"    # file messages from the inbox as one log event
   uo gmail show DR-###                      # print the parsed email; no network
   uo gmail auth [--client FILE]             # Google consent in the browser
   uo gmail push DR-### DR-###               # create Gmail drafts; existing ones are left alone
   uo gmail push --update DR-###             # overwrite the Gmail draft with the same subject; never creates one
   uo gmail replies [--days N] [DR-### ...]  # replies, auto-replies and bounces for sent drafts
   uo gmail attachments [--days N] [--out DIR] [DR-### ...]  # save files attached to those replies
-  uo gmail sync [DR-### ...]                # copy the text Gmail actually sent back into sent drafts
+  uo gmail sync [DR-### ...]                # copy the text Gmail actually sent back into email drafts;
+                                            # a draft found in the sent mail is marked sent
 
 A draft file must have `channel: email`, a first body line `Subject: ...`, then
 the message, then one `To:` line with the addresses, optionally a `Cc:` line
@@ -47,22 +54,24 @@ import os
 import re
 import secrets
 import shutil
+import sys
 import time
 import tomllib
 import urllib.parse
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import getaddresses, parseaddr
 from html.parser import HTMLParser
 from pathlib import Path
 
 from unfloat_os import credentials, frontmatter, schema
-from unfloat_os.channels import ChannelError
+from unfloat_os.channels import ChannelError, mailbox
+from unfloat_os.channels.mailbox import header
 from unfloat_os.drafts import DraftError, attachment_problems, forbidden_marks
 from unfloat_os.drafts import read_email as parse_email
 from unfloat_os.http import HttpError, send
-from unfloat_os.records import Store
+from unfloat_os.records import Records, Store
 from unfloat_os.workspace import Workspace
 
 COMPOSE = "https://www.googleapis.com/auth/gmail.compose"
@@ -88,10 +97,16 @@ class GmailConfig:
     papers: Path
     conf_dir: Path
     account: str
+    blind: dict[str, str] = field(default_factory=dict)  # Gmail thread ID -> why its text is withheld
+    untagged_until: str = ""  # mail older than this may be filed by log events without a Gmail tag
 
     @property
     def drafts(self) -> Path:
         return self.store.folder(schema.DRAFT)
+
+    @property
+    def cache(self) -> mailbox.Cache:
+        return mailbox.Cache.for_account(self.account)
 
     @property
     def private(self) -> Path:
@@ -105,14 +120,30 @@ class GmailConfig:
     def from_workspace(cls, ws: Workspace) -> GmailConfig:
         path = ws.ops / "config" / "channels.toml"
         try:
-            account = tomllib.loads(path.read_text(encoding="utf-8")).get("gmail", {}).get("account")
+            section = tomllib.loads(path.read_text(encoding="utf-8")).get("gmail", {})
         except FileNotFoundError as exc:
             raise ChannelError(f"{path} not found") from exc
         except tomllib.TOMLDecodeError as exc:
             raise ChannelError(f"{path}: {exc}") from exc
+        account = section.get("account")
         if not isinstance(account, str) or not account.strip():
             raise ChannelError(f'{path}: [gmail] needs account = "..."')
-        return cls(Store(ws.ops), ws.data_dir("private") / "papers", credentials.channel_dir("gmail"), account.strip())
+        blind = section.get("blind", {})
+        if not isinstance(blind, dict) or not all(isinstance(v, str) for v in blind.values()):
+            raise ChannelError(f'{path}: [gmail.blind] maps a thread ID to a reason: "<id>" = "why"')
+        until = str(section.get("untagged_until", ""))
+        try:
+            mailbox.parse_until(until)
+        except ValueError as exc:
+            raise ChannelError(f'{path}: [gmail] untagged_until must look like "2026-11-17T21:30"') from exc
+        return cls(
+            Store(ws.ops),
+            ws.data_dir("private") / "papers",
+            credentials.channel_dir("gmail"),
+            account.strip(),
+            dict(blind),
+            until,
+        )
 
 
 def draft_path(cfg: GmailConfig, draft_id: str) -> Path:
@@ -187,11 +218,33 @@ def raw_message(draft: dict, target: dict | None = None) -> str:
     return base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
 
 
+# Gmail's per-user quota is counted per minute, so the waits add up to a little over a minute.
+RETRY_WAITS_S = (2, 5, 10, 20, 40)
+RATE_LIMIT_MARKS = ("rateLimitExceeded", "userRateLimitExceeded", "Quota exceeded", "RESOURCE_EXHAUSTED")
+
+
+def rate_limited(exc: HttpError) -> bool:
+    return exc.status == 429 or (exc.status == 403 and any(mark in exc.detail for mark in RATE_LIMIT_MARKS))
+
+
 def call(method: str, url: str, data: dict | None = None, token: str | None = None, form: bool = False) -> dict:
-    try:
-        return send(method, url, data=data, form=form, bearer=token)
-    except HttpError as exc:
-        raise ChannelError(str(exc)) from exc
+    """One API request; a rate limit or a server error is retried after a pause, others raise at once."""
+    for wait in (*RETRY_WAITS_S, None):
+        try:
+            return send(method, url, data=data, form=form, bearer=token)
+        except HttpError as exc:
+            retry = rate_limited(exc) or exc.status >= 500
+            if retry and wait is not None:
+                why = "Gmail rate limit" if rate_limited(exc) else f"Gmail HTTP {exc.status}"
+                print(f"{why}; retrying in {wait} s", file=sys.stderr, flush=True)
+                time.sleep(wait)
+                continue
+            if rate_limited(exc):
+                raise ChannelError(
+                    "Gmail's per-minute quota is still used up after waiting about a minute; try again shortly"
+                ) from exc
+            raise ChannelError(str(exc)) from exc
+    raise AssertionError("unreachable")
 
 
 def client(cfg: GmailConfig) -> tuple[str, str]:
@@ -342,15 +395,6 @@ def drafts_with_subject(token: str, subject: str) -> list[str]:
     return found
 
 
-def reply_target(cfg: GmailConfig, token: str, parent: dict) -> dict:
-    """What a reply to the parent's sent email answers: the latest message from someone else in
-    its thread, or the sent email itself while nobody has answered (a reminder)."""
-    sent = sent_message(cfg, token, parent, email_subjects(cfg) - {parent["subject"]})
-    if sent is None:
-        raise ChannelError(f"{parent['id']}: its sent email was not found, so there is no thread to reply in")
-    return thread_target(cfg, token, sent["threadId"], parent["id"], follow_up=True)
-
-
 def thread_target(cfg: GmailConfig, token: str, thread_id: str, label: str, follow_up: bool = False) -> dict:
     """The latest message from someone else in a Gmail thread, as In-Reply-To/References for a reply.
 
@@ -407,11 +451,6 @@ def cmd_push(args, ws: Workspace) -> int:
                 f"{draft['subject']}{files}"
             )
     return 1 if problems else 0
-
-
-def header(message: dict, name: str) -> str:
-    headers = message.get("payload", {}).get("headers", [])
-    return next((h["value"] for h in headers if h["name"].lower() == name.lower()), "")
 
 
 def when(message: dict) -> str:
@@ -566,7 +605,7 @@ def sent_outreach(cfg: GmailConfig, ids: list[str]) -> tuple[list[dict], list[st
     return drafts, skipped
 
 
-def show_messages(cfg: GmailConfig, messages: list[dict]) -> None:
+def show_messages(cfg: GmailConfig, messages: list[dict], blind: str | None = None) -> None:
     replies = 0
     for message in messages:
         name, addr = parseaddr(header(message, "From"))
@@ -579,12 +618,15 @@ def show_messages(cfg: GmailConfig, messages: list[dict]) -> None:
         print(f"   -- {when(message)} from {name or addr} <{addr}>: {header(message, 'Subject')}")
         if header(message, "Cc"):
             print(f"      cc: {header(message, 'Cc')}")
+        files = attached_files(message.get("payload", {}))
+        if blind:
+            print(f"      [text and {len(files)} attachment(s) withheld: {blind}]")
+            continue
         body = message_text(message.get("payload", {}))
         if len(body) > BODY_CHARS:
             body = body[:BODY_CHARS] + " [...]"
         for line in body.split("\n"):
             print(f"      {line}")
-        files = attached_files(message.get("payload", {}))
         if files:
             print(
                 "      attachments: "
@@ -605,39 +647,167 @@ def reply_drafts(cfg: GmailConfig, ids: list[str]) -> list[dict]:
     return drafts
 
 
-def matched_threads(drafts: list[dict], days: int, token: str) -> tuple[dict[str, list], list[list]]:
-    """Messages per draft from threads carrying its subject, and the other threads with the same recipients."""
-    addresses = sorted({address.lower() for draft in drafts for address in draft["to"]})
-    terms = [f"from:({' OR '.join(addresses)})"] + [f'subject:"{draft["subject"]}"' for draft in drafts]
-    query = f"newer_than:{days}d ({' OR '.join(terms)})"
-    listing = call("GET", f"{API}/threads?" + urllib.parse.urlencode({"q": query, "maxResults": 100}), token=token)
+# the mail in scope (D-025) ------------------------------------------------------------------------
+
+INBOX_DAYS = 30
+EXCERPT_CHARS = 700
+# How close the sent text must be before `sync` takes a message as the one an unsent draft became.
+MATCH_RATIO = 0.6
+
+
+def email_drafts(cfg: GmailConfig) -> list[dict]:
+    """Every email draft in the tool's format, whatever its status."""
+    found = []
+    for path in sorted(cfg.drafts.glob("DR-*.md")):
+        try:
+            found.append(read_email(path))
+        except ChannelError:
+            continue  # not an email draft, or not in the tool's format
+    return found
+
+
+def email_subjects(cfg: GmailConfig) -> set[str]:
+    return {draft["subject"] for draft in email_drafts(cfg)}
+
+
+def created(draft: dict) -> dt.date:
+    try:
+        return dt.date.fromisoformat(str(draft["created"]))
+    except ValueError:
+        return dt.date.min
+
+
+@dataclass
+class Scope:
+    """What decides which mail is read: the address book, the email drafts and the records."""
+
+    book: mailbox.Book
+    drafts: list[dict]
+    records: Records
+
+
+def scope(cfg: GmailConfig, records: Records | None = None) -> Scope:
+    records = records or cfg.store.load()
+    people = {pid: [str(a) for a in (rec.meta.get("email") or [])] for pid, rec in records.people.items()}
+    drafts = email_drafts(cfg)
+    return Scope(mailbox.build_book(cfg.account, people, drafts), drafts, records)
+
+
+def refreshed(cfg: GmailConfig, token: str, days: int) -> Scope:
+    """The scope, after bringing the local cache up to date for the last `days` days."""
+    found = scope(cfg)
+    since = dt.date.today() - dt.timedelta(days=days)
+    subjects = [d["subject"] for d in found.drafts if d["status"] == "sent" and created(d) >= since]
+    listed, fetched = mailbox.refresh(call, token, cfg.cache, found.book, subjects, days)
+    print(f"Gmail: {listed} thread(s) in scope from the last {days} days; {fetched} new or changed, downloaded")
+    return found
+
+
+def thread_drafts(drafts: list[dict], all_mail: list[mailbox.Mail]) -> dict[str, list[dict]]:
+    """Gmail thread ID -> the email drafts known to live in it (by `gmail_id` or `reply_thread`)."""
+    thread_of = {mail.id: mail.thread for mail in all_mail}
+    links: dict[str, list[dict]] = {}
+    for draft in drafts:
+        threads = {thread_of.get(draft["gmail_id"] or ""), draft["reply_thread"]} - {None}
+        for thread in threads:
+            links.setdefault(thread, []).append(draft)
+    return links
+
+
+def similarity(mail: mailbox.Mail, draft: dict) -> float:
+    return difflib.SequenceMatcher(None, sent_text(mail.message.get("payload", {})), draft["body"]).ratio()
+
+
+def find_sent(
+    draft: dict,
+    candidates: list[mailbox.Mail],
+    other_subjects: set[str],
+    parent_thread: str | None = None,
+    strict: bool = False,
+) -> mailbox.Mail | None:
+    """Daniil's sent message for a draft: same subject, else the only message to those recipients with a new subject.
+
+    Replies in one thread share a subject, so among same-subject messages the one whose text is
+    closest to the draft wins (Daniil may have edited it before sending). `strict` (for a draft not
+    yet marked sent) takes only a same-subject message sent on or after the draft's day whose text is
+    close to the draft's."""
+    since = created(draft) if strict else created(draft) - dt.timedelta(days=1)
+    to = {address.lower() for address in draft["to"]}
+    threads = {draft["reply_thread"], parent_thread} - {None}
+    pool = [m for m in candidates if m.mine and m.date >= since and (set(m.recipients) & to or m.thread in threads)]
+    exact = [m for m in pool if m.subject == draft["subject"]]
+    if exact:
+        best = max(exact, key=lambda m: similarity(m, draft))
+        return None if strict and similarity(best, draft) < MATCH_RATIO else best
+    if strict:
+        return None
+    renamed = [m for m in pool if m.subject not in other_subjects]
+    return renamed[0] if len(renamed) == 1 else None
+
+
+def sent_message(cfg: GmailConfig, token: str, draft: dict) -> mailbox.Mail | None:
+    """The message a sent draft went out as, from its `gmail_id` or by matching."""
+    days = max(INBOX_DAYS, (dt.date.today() - created(draft)).days + 2)
+    found = refreshed(cfg, token, days)
+    all_mail = mailbox.mails(cfg.cache, found.book)
+    if draft["gmail_id"]:
+        known = next((m for m in all_mail if m.id == draft["gmail_id"]), None)
+        if known:
+            return known
+    others = {d["subject"] for d in found.drafts} - {draft["subject"]}
+    return find_sent(draft, all_mail, others)
+
+
+def reply_target(cfg: GmailConfig, token: str, parent: dict) -> dict:
+    """What a reply to the parent's sent email answers: the latest message from someone else in
+    its thread, or the sent email itself while nobody has answered (a reminder)."""
+    sent = sent_message(cfg, token, parent)
+    if sent is None:
+        raise ChannelError(f"{parent['id']}: its sent email was not found, so there is no thread to reply in")
+    return thread_target(cfg, token, sent.thread, parent["id"], follow_up=True)
+
+
+def matched_threads(cfg: GmailConfig, found: Scope, drafts: list[dict], days: int) -> tuple[dict, list]:
+    """Messages per draft from the cached threads it lives in or whose subject it carries, and the
+    other threads in scope with a received message in the window, as (thread ID, messages)."""
+    since = dt.date.today() - dt.timedelta(days=days)
     by_draft: dict[str, list] = {draft["id"]: [] for draft in drafts}
     other = []
-    for item in listing.get("threads", []):
-        messages = call("GET", f"{API}/threads/{item['id']}?format=full", token=token).get("messages", [])
-        subjects = " ".join(header(message, "Subject") for message in messages)
-        match = next((draft for draft in drafts if draft["subject"] in subjects), None)
+    for thread in cfg.cache.threads():
+        messages = [m for m in thread.get("messages", []) if "internalDate" in m]
+        if not messages or max(mailbox.local_date(m) for m in messages) < since:
+            continue
+        ids = {m["id"] for m in messages}
+        subjects = " ".join(header(m, "Subject") for m in messages)
+        match = next(
+            (d for d in drafts if (d["gmail_id"] and d["gmail_id"] in ids) or d["reply_thread"] == thread["id"]),
+            None,
+        ) or next((d for d in drafts if d["subject"] in subjects), None)
         if match:
-            by_draft[match["id"]].extend(messages)
-        else:
-            other.append(messages)
+            by_draft[match["id"]].append((thread["id"], messages))
+        elif any(not cfg.is_me(parseaddr(header(m, "From"))[1]) and mailbox.local_date(m) >= since for m in messages):
+            other.append((thread["id"], messages))
     return by_draft, other
 
 
 def cmd_replies(args, ws: Workspace) -> int:
     cfg = GmailConfig.from_workspace(ws)
     drafts = reply_drafts(cfg, args.ids)
-    by_draft, other = matched_threads(drafts, args.days, access_token(cfg, read=True))
+    found = refreshed(cfg, access_token(cfg, read=True), args.days)
+    by_draft, other = matched_threads(cfg, found, drafts, args.days)
     for draft in drafts:
         print(f"== {draft['id']}  {draft['subject']}")
         if not by_draft[draft["id"]]:
             print(f"   no sent message found in the last {args.days} days")
             continue
         # Auto-replies arrive as separate threads; show one timeline per email.
-        show_messages(cfg, sorted(by_draft[draft["id"]], key=lambda message: int(message["internalDate"])))
-    for messages in other:
-        print(f"== Other thread with these contacts: {header(messages[0], 'Subject')}")
-        show_messages(cfg, messages)
+        for thread, messages in by_draft[draft["id"]]:
+            show_messages(cfg, sorted(messages, key=lambda m: int(m["internalDate"])), cfg.blind.get(thread))
+    if args.ids:
+        return 0
+    for thread, messages in other:
+        print(f"== Other thread with people in the records: {header(messages[0], 'Subject')}")
+        show_messages(cfg, messages, cfg.blind.get(thread))
     return 0
 
 
@@ -646,10 +816,13 @@ def cmd_attachments(args, ws: Workspace) -> int:
     out = args.out or cfg.papers
     drafts = reply_drafts(cfg, args.ids)
     token = access_token(cfg, read=True)
-    by_draft, other = matched_threads(drafts, args.days, token)
+    by_draft, other = matched_threads(cfg, refreshed(cfg, token, args.days), drafts, args.days)
     out.mkdir(parents=True, exist_ok=True)
     saved = 0
-    for messages in [*by_draft.values(), *other]:
+    for thread, messages in [*(pair for pairs in by_draft.values() for pair in pairs), *other]:
+        if thread in cfg.blind:
+            print(f"thread {thread} skipped: {cfg.blind[thread]}")
+            continue
         for message in messages:
             if cfg.is_me(parseaddr(header(message, "From"))[1]):
                 continue
@@ -676,38 +849,139 @@ def cmd_attachments(args, ws: Workspace) -> int:
     return 0
 
 
-def email_subjects(cfg: GmailConfig) -> set[str]:
-    subjects = set()
-    for path in cfg.drafts.glob("DR-*.md"):
-        try:
-            subjects.add(read_email(path)["subject"])
-        except ChannelError:
-            continue  # not an email draft in the tool's format
-    return subjects
+# the inbox: mail the records do not hold ---------------------------------------------------------
 
 
-def sent_message(cfg: GmailConfig, token: str, draft: dict, other_subjects: set[str]) -> dict | None:
-    """Daniil's sent message for a draft: same subject, else the only message to those recipients with a new subject.
+@dataclass
+class Inbox:
+    items: list[mailbox.Mail]  # open messages, oldest first
+    all_mail: list[mailbox.Mail]
+    links: dict[str, list[dict]]  # thread -> drafts in it
 
-    Replies in one thread share a subject, so among same-subject messages the one whose text is
-    closest to the draft wins (Daniil may have edited it before sending)."""
-    since = (dt.date.fromisoformat(draft["created"]) - dt.timedelta(days=1)).strftime("%Y/%m/%d")
-    query = f"in:sent after:{since} to:({' OR '.join(draft['to'])})"
-    listing = call("GET", f"{API}/messages?" + urllib.parse.urlencode({"q": query, "maxResults": 50}), token=token)
-    messages = [
-        call("GET", f"{API}/messages/{item['id']}?format=full", token=token) for item in listing.get("messages", [])
-    ]
-    messages = sorted(
-        (m for m in messages if cfg.is_me(parseaddr(header(m, "From"))[1])), key=lambda m: int(m["internalDate"])
+
+def inbox(cfg: GmailConfig, found: Scope, days: int, today: dt.date | None = None) -> Inbox:
+    all_mail = mailbox.mails(cfg.cache, found.book)
+    since = (today or dt.date.today()) - dt.timedelta(days=days)
+    logged = mailbox.logged_from(
+        found.records.events, [d["gmail_id"] for d in found.drafts], mailbox.parse_until(cfg.untagged_until)
     )
-    exact = [m for m in messages if header(m, "Subject") == draft["subject"]]
-    if exact:
-        return max(
-            exact,
-            key=lambda m: difflib.SequenceMatcher(None, sent_text(m.get("payload", {})), draft["body"]).ratio(),
+    items = mailbox.open_mail([m for m in all_mail if m.date >= since], logged)
+    return Inbox(items, all_mail, thread_drafts(found.drafts, all_mail))
+
+
+def describe(cfg: GmailConfig, box: Inbox, mail: mailbox.Mail, chars: int) -> list[str]:
+    message = mail.message
+    stamp = when(message)
+    people = ", ".join(sorted(mail.people)) or "not in the records"
+    if mail.mine:
+        lines = [f"- {mail.id}  {stamp}  you to {header(message, 'To')}  [{people}]"]
+    else:
+        lines = [f"- {mail.id}  {stamp}  from {header(message, 'From')}  [{people}]"]
+    lines.append(f"    Subject: {mail.subject}")
+    drafts = box.links.get(mail.thread, [])
+    notes = [f"thread {mail.thread}"]
+    if drafts:
+        notes.append("drafts " + ", ".join(d["id"] + (f" ({d['task']})" if d["task"] else "") for d in drafts))
+    if not mail.mine:
+        answer = mailbox.replied_after(mail, box.all_mail)
+        notes.append(f"you replied {when(answer.message)}" if answer else "no reply from you yet")
+        kind = mailbox.kind_of(mail)
+        if kind:
+            notes.append(kind)
+    lines.append("    " + "; ".join(notes))
+    files = attached_files(message.get("payload", {}))
+    if mail.thread in cfg.blind:
+        lines.append(f"    [text and {len(files)} attachment(s) withheld: {cfg.blind[mail.thread]}]")
+        return lines
+    body = sent_text(message.get("payload", {})) if mail.mine else message_text(message.get("payload", {}))
+    if chars and len(body) > chars:
+        body = body[:chars].rstrip() + " [...]"
+    lines += [f"      {line}" for line in body.split("\n") if line.strip()]
+    if files:
+        lines.append(
+            "    attachments: "
+            + "; ".join(f"{part['filename']} ({part.get('body', {}).get('size', 0) // 1024} KB)" for part in files)
         )
-    renamed = [m for m in messages if header(m, "Subject") not in other_subjects]
-    return renamed[0] if len(renamed) == 1 else None
+    return lines
+
+
+def checked_line(cfg: GmailConfig) -> str:
+    state = cfg.cache.state()
+    if not state:
+        return "never checked on this machine"
+    return f"checked {state['checked'].replace('T', ' ')} over the last {state['days']} days"
+
+
+def cmd_inbox(args, ws: Workspace) -> int:
+    cfg = GmailConfig.from_workspace(ws)
+    found = scope(cfg) if args.offline else refreshed(cfg, access_token(cfg, read=True), args.days)
+    box = inbox(cfg, found, args.days)
+    received = [m for m in box.items if not m.mine]
+    sent = [m for m in box.items if m.mine]
+    print(
+        f"Not in the records: {len(received)} received, {len(sent)} sent (last {args.days} days; {checked_line(cfg)})"
+    )
+    if received:
+        print("\n== Received")
+        for mail in received:
+            print("\n".join(describe(cfg, box, mail, 0 if args.full else EXCERPT_CHARS)))
+    if sent:
+        print("\n== Sent by you, held by no draft or log event")
+        for mail in sent:
+            print("\n".join(describe(cfg, box, mail, 0 if args.full else EXCERPT_CHARS // 2)))
+    unknown = sorted({m.sender for m in received if not m.people})
+    if unknown:
+        print("\nSenders not in the records (add to a person's `email` to link them): " + ", ".join(unknown))
+    if box.items:
+        print('\nFile each: uo gmail done ID[,ID] REFS "facts, not text" (an email draft that went out: uo gmail sync)')
+    return 0
+
+
+GMAIL_ID_RE = re.compile(r"^[0-9a-f]{4,}$")
+
+
+def cmd_done(args, ws: Workspace) -> int:
+    cfg = GmailConfig.from_workspace(ws)
+    ids = [part.strip() for part in args.messages.split(",") if part.strip()]
+    bad = [i for i in ids if not GMAIL_ID_RE.match(i)]
+    if not ids or bad:
+        raise ChannelError(f"not Gmail message IDs: {', '.join(bad) or args.messages!r}")
+    found = scope(cfg)
+    known = {m.id: m for m in mailbox.mails(cfg.cache, found.book)}
+    missing = [i for i in ids if i not in known]
+    if missing:
+        raise ChannelError(f"not in the local cache: {', '.join(missing)} (run `uo gmail inbox` first)")
+    kind = args.type or ("email-out" if all(known[i].mine for i in ids) else "email-in")
+    refs = [] if args.refs.strip() == "-" else [r.strip() for r in args.refs.split(",") if r.strip()]
+    summary = args.summary.strip()
+    if mailbox.TAG_RE.search(summary):
+        raise ChannelError("the summary already ends with a [gmail ...] tag; give the IDs only as the first argument")
+    date = dt.date.fromisoformat(args.date) if args.date else dt.date.today()
+    event = cfg.store.append_event(found.records, date, kind, refs, f"{summary} [gmail {', '.join(ids)}]")
+    print(event.format())
+    return 0
+
+
+def status_lines(ws: Workspace, records: Records, today: dt.date, shown: int = 5) -> list[str]:
+    """The Gmail section of `uo status`, from the local cache only (no network)."""
+    try:
+        cfg = GmailConfig.from_workspace(ws)
+    except ChannelError:
+        return []  # no Gmail in this workspace: no section
+    state = cfg.cache.state()
+    if not state:
+        return ["never checked on this machine: run `uo gmail inbox`"]
+    box = inbox(cfg, scope(cfg, records), int(state.get("days", INBOX_DAYS)), today)
+    received = [m for m in box.items if not m.mine]
+    sent = [m for m in box.items if m.mine]
+    lines = [f"{len(received)} received, {len(sent)} sent not in the records ({checked_line(cfg)}; `uo gmail inbox`)"]
+    for mail in received[-shown:]:
+        who = ", ".join(sorted(mail.people)) or mail.sender
+        lines.append(f"{when(mail.message)} from {who}: {mail.subject}")
+    return lines
+
+
+# sync: the draft holds what went out -------------------------------------------------------------
 
 
 def write_sent_version(path: Path, subject: str, body: str, to: list[str] | None) -> None:
@@ -723,23 +997,55 @@ def write_sent_version(path: Path, subject: str, body: str, to: list[str] | None
     )
 
 
+def sync_targets(drafts: list[dict], ids: list[str]) -> list[dict]:
+    """Named drafts, else sent drafts without a `gmail_id` and drafts not yet marked sent."""
+    if ids:
+        by_id = {d["id"]: d for d in drafts}
+        unknown = [i for i in ids if i not in by_id]
+        if unknown:
+            raise ChannelError(f"not email drafts in the tool's format: {', '.join(unknown)}")
+        dropped = [i for i in ids if by_id[i]["status"] == "dropped"]
+        if dropped:
+            raise ChannelError(f"dropped: {', '.join(dropped)}")
+        return [by_id[i] for i in ids]
+    return [d for d in drafts if (d["status"] == "sent" and not d["gmail_id"]) or d["status"] in ("draft", "approved")]
+
+
 def cmd_sync(args, ws: Workspace) -> int:
     cfg = GmailConfig.from_workspace(ws)
-    drafts, skipped = sent_outreach(cfg, args.ids)
-    for note in skipped:
-        print(f"skipped, not in the tool's draft format: {note}")
-    token = access_token(cfg, read=True)
-    subjects = email_subjects(cfg)
+    drafts = email_drafts(cfg)
+    targets = sync_targets(drafts, args.ids)
+    already = sum(1 for d in drafts if d["status"] == "sent" and d["gmail_id"])
+    if not targets:
+        print(f"nothing to sync ({already} sent draft(s) already hold their Gmail ID)")
+        return 0
+    days = max(INBOX_DAYS, (dt.date.today() - min(created(d) for d in targets)).days + 2)
+    found = refreshed(cfg, access_token(cfg, read=True), days)
+    all_mail = mailbox.mails(cfg.cache, found.book)
+    by_id = {d["id"]: d for d in drafts}
+    claimed = {d["gmail_id"]: d["id"] for d in drafts if d["gmail_id"]}
+    thread_of = {m.id: m.thread for m in all_mail}
+    subjects = {d["subject"] for d in drafts}
     problems = 0
-    for draft in drafts:
-        message = sent_message(cfg, token, draft, subjects - {draft["subject"]})
+    # Sent drafts first, so each takes its own message before an unsent draft looks for one.
+    for draft in sorted(targets, key=lambda d: (d["status"] != "sent", d["id"])):
+        strict = draft["status"] != "sent"
+        if draft["gmail_id"]:
+            message = next((m for m in all_mail if m.id == draft["gmail_id"]), None)
+        else:
+            parent = by_id.get(draft["reply_to"] or "")
+            parent_thread = thread_of.get(parent["gmail_id"] or "") if parent else None
+            free = [m for m in all_mail if claimed.get(m.id, draft["id"]) == draft["id"]]
+            message = find_sent(draft, free, subjects - {draft["subject"]}, parent_thread, strict)
         if message is None:
-            print(f"{draft['id']}: sent message not found, or more than one candidate; file unchanged")
-            problems += 1
+            if not strict:
+                print(f"{draft['id']}: sent message not found, or more than one candidate; file unchanged")
+                problems += 1
             continue
-        subject = header(message, "Subject")
-        body = sent_text(message.get("payload", {}))
-        to = [address for _, address in getaddresses([header(message, "To")]) if address]
+        claimed[message.id] = draft["id"]
+        subject = message.subject
+        body = sent_text(message.message.get("payload", {}))
+        to = [a for _, a in getaddresses([header(message.message, "To")]) if a]
         changes = []
         if subject != draft["subject"]:
             changes.append("subject")
@@ -747,17 +1053,22 @@ def cmd_sync(args, ws: Workspace) -> int:
             changes.append("text")
         if {a.lower() for a in to} != {a.lower() for a in draft["to"]}:
             changes.append("recipients")
-        if not changes:
-            print(f"{draft['id']}: matches the sent email")
-            continue
-        write_sent_version(draft_path(cfg, draft["id"]), subject, body, to if "recipients" in changes else None)
-        print(f"{draft['id']}: updated to the sent version ({', '.join(changes)})")
+        path = draft_path(cfg, draft["id"])
+        if changes:
+            write_sent_version(path, subject, body, to if "recipients" in changes else None)
+        updates = {"gmail_id": message.id, **({"status": "sent"} if strict else {})}
+        path.write_text(frontmatter.update(path.read_text(encoding="utf-8"), updates), encoding="utf-8")
+        verb = f"found in your sent mail ({when(message.message)}), marked sent" if strict else "synced"
+        detail = f"updated to the sent version ({', '.join(changes)})" if changes else "matches the sent email"
+        print(f"{draft['id']}: {verb}; {detail}")
         if "subject" in changes:
             print(f"   subject: {draft['subject']!r} -> {subject!r}")
         for line in difflib.unified_diff(
             draft["body"].strip().splitlines(), body.splitlines(), "draft", "sent", lineterm="", n=0
         ):
             print(f"   {line}")
+    if already and not args.ids:
+        print(f"{already} sent draft(s) already hold their Gmail ID; name one to compare it again")
     return 1 if problems else 0
 
 
@@ -810,8 +1121,25 @@ def register(sub: argparse._SubParsersAction) -> None:
         "ids", nargs="*", metavar="DR-###", help="limit to these drafts (default: every sent email draft)"
     )
     attach.set_defaults(handler=cmd_attachments)
-    sync = commands.add_parser("sync", help="replace sent email drafts with the text Gmail actually sent")
+    sync = commands.add_parser(
+        "sync", help="copy the text Gmail actually sent into email drafts; mark drafts found in the sent mail as sent"
+    )
     sync.add_argument(
-        "ids", nargs="*", metavar="DR-###", help="limit to these drafts (default: every sent email draft)"
+        "ids",
+        nargs="*",
+        metavar="DR-###",
+        help="compare these drafts (default: sent drafts without a gmail_id, and drafts not yet marked sent)",
     )
     sync.set_defaults(handler=cmd_sync)
+    box = commands.add_parser("inbox", help="mail with people in the records that the records do not hold yet")
+    box.add_argument("--days", type=int, default=INBOX_DAYS, help=f"look back this many days (default {INBOX_DAYS})")
+    box.add_argument("--offline", action="store_true", help="use the local cache only; no network")
+    box.add_argument("--full", action="store_true", help="print whole messages instead of excerpts")
+    box.set_defaults(handler=cmd_inbox)
+    done = commands.add_parser("done", help="file inbox messages as one log event tagged with their Gmail IDs")
+    done.add_argument("messages", metavar="MSG[,MSG]", help="Gmail message IDs, as `uo gmail inbox` prints them")
+    done.add_argument("refs", metavar="REFS", help="comma-separated record IDs, or - for none")
+    done.add_argument("summary", help="one line of facts (not message text)")
+    done.add_argument("--type", help="log type (default email-in, or email-out when every message is yours)")
+    done.add_argument("--date", metavar="YYYY-MM-DD", help="event date (default today)")
+    done.set_defaults(handler=cmd_done)

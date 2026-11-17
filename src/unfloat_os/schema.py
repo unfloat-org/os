@@ -192,6 +192,7 @@ def _person(milestones: tuple[str, ...]) -> Kind:
             Field("org", "Free text"),
             Field("role", "Free text"),
             Field("location", "Free text"),
+            Field("email", "Their addresses (list); `uo gmail` reads threads with them", "list"),
             Field("via", "", "ref-or-text", refs=("P",)),
             Field("milestones", "", "vocab-list", required=True, vocab=milestones),
             Field("tags", "Free list", "list"),
@@ -281,6 +282,7 @@ DRAFT = Kind(
         Field("reply_to", "Sent email draft this one answers (optional)", "ref", refs=("DR",)),
         Field("reply_thread", "Gmail thread ID of a thread someone else started (optional; instead of `reply_to`)"),
         Field("attachments", "Files `uo gmail push` attaches, relative to the private data folder (optional)", "list"),
+        Field("gmail_id", "Gmail ID of the message that went out; `uo gmail sync` writes it (email drafts only)"),
         Field("series", "Video series: a profile `config/video/<series>.toml` (video drafts only)"),
         Field("number", "Number of the update in its series, unique among drafts not dropped (video drafts only)"),
     ),
@@ -291,7 +293,10 @@ DRAFT = Kind(
         Rule("`number` is a positive whole number without leading zeros", "error", _number_positive),
         Rule("`series` is a name: lowercase letters, digits and `-`", "error", _series_name),
     ),
-    body="The text, ready to copy. Only Daniil sets `approved` or `sent`.",
+    body=(
+        "The text, ready to copy. Only Daniil sets `approved`; `sent` is set by Daniil, or by `uo gmail sync` "
+        "when his sent mail holds the draft."
+    ),
 )
 
 # A pure code constant: public repositories check their analyses without the records repository.

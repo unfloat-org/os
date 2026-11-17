@@ -1,7 +1,8 @@
 """`uo status`: what a session needs to know in one screen before it starts work.
 
 It reports, in order: the records check, each repository's branch against its upstream (as of the
-last fetch), inbox entries waiting to be filed, tasks that are overdue or due within three days,
+last fetch), inbox entries waiting to be filed, Gmail messages the records do not hold yet (from the
+local cache of `uo gmail inbox`; no network), tasks that are overdue or due within three days,
 waiting tasks whose due date has passed or is near, drafts waiting for Daniil, and whether CONTEXT.md
 lags the log. Every section is a pure function of the loaded records and a date, so the selection
 rules are testable and the same on every machine. The command exits 1 only when the check has errors.
@@ -160,7 +161,14 @@ def _section(title: str, lines: list[str], count: bool = True) -> list[str]:
     return [heading, *(f"  {line}" for line in lines)]
 
 
-def render(ws: Workspace, records: Records, today: dt.date, inbox: list[str], check_lines: list[str]) -> list[str]:
+def render(
+    ws: Workspace,
+    records: Records,
+    today: dt.date,
+    inbox: list[str],
+    check_lines: list[str],
+    gmail_lines: list[str] | None = None,
+) -> list[str]:
     """The status screen as lines; `check_lines` is the check's headline followed by its errors."""
     context = health.check_context_fresh(ws, records)
     sections = [
@@ -168,6 +176,7 @@ def render(ws: Workspace, records: Records, today: dt.date, inbox: list[str], ch
         _section("Records check", check_lines, count=False),
         _section("Repositories", [repo_line(m) for m in health.member_repos(ws)], count=False),
         _section("Inbox", inbox),
+        *([_section("Gmail", gmail_lines, count=False)] if gmail_lines else []),
         _section("Overdue tasks", [_task_line(t, today) for t in overdue_tasks(records, today)]),
         _section(f"Due within {SOON_DAYS} days", [_task_line(t, today) for t in due_soon_tasks(records, today)]),
         _section("Waiting, due or near", [_task_line(t, today) for t in waiting_due_tasks(records, today)]),
@@ -181,6 +190,16 @@ def render(ws: Workspace, records: Records, today: dt.date, inbox: list[str], ch
 
 
 # command -----------------------------------------------------------------------------------
+
+
+def gmail_section(ws: Workspace, records: Records, today: dt.date) -> list[str]:
+    """Mail the records do not hold yet, from the local Gmail cache (no network); never fails the status."""
+    from unfloat_os.channels import gmail  # deferred: only the status screen needs it here
+
+    try:
+        return gmail.status_lines(ws, records, today)
+    except Exception as exc:  # the status screen must still print
+        return [f"unavailable: {exc}"]
 
 
 def cmd_status(args: argparse.Namespace, ws: Workspace) -> int:
@@ -202,7 +221,7 @@ def cmd_status(args: argparse.Namespace, ws: Workspace) -> int:
     inbox_path = ws.ops / INBOX
     inbox = inbox_entries(inbox_path.read_text(encoding="utf-8")) if inbox_path.is_file() else []
     records = Store(ws.ops).load()
-    print("\n".join(render(ws, records, today, inbox, check_lines)))
+    print("\n".join(render(ws, records, today, inbox, check_lines, gmail_section(ws, records, today))))
     return 1 if report.errors else 0
 
 
